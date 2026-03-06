@@ -1,19 +1,29 @@
-# SensorPush Pro v4.1
+# SensorPush Pro v4
 
-Incluye exportación de datos procesados en **Excel formato tabla**.
+Dashboard avanzado para monitoreo de temperatura y humedad.
 
-## Descargas disponibles
-- CSV
-- Excel (.xlsx) con tabla estructurada
-- PNG
-- PDF
+## Incluye
+- carga de CSV o Excel
+- detección automática de columnas
+- gráficas interactivas con Plotly
+- selector: ambas variables / solo temperatura / solo humedad
+- sombreado visual del rango aceptable
+- KPI de cumplimiento por variable
+- filtro por fechas
+- agrupación por intervalo
+- eventos fuera de rango
+- exportación de PNG, CSV y PDF
 
-La tabla Excel permite:
-- filtros automáticos
-- ordenamiento
-- formato estilo tabla de Excel.
+## Ejecutar localmente
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## Publicación gratis
+Sube `app.py`, `requirements.txt` y `README.md` a GitHub y publícala en Streamlit Community Cloud.
 
 
-## Resumen ejecutivo actualizado
-- diferencia entre temperatura máxima y mínima con criterio <= 2 °C
-- diferencia entre humedad máxima y mínima con criterio <= 5 % HR
+## Ajuste adicional
+- resumen ejecutivo con Δ temperatura (criterio ≤ 2 °C)
+- resumen ejecutivo con Δ humedad relativa (criterio ≤ 5 % HR)
