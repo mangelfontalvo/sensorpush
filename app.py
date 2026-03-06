@@ -1,5 +1,6 @@
 
 import io
+import zipfile
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -81,8 +82,26 @@ def load_data(uploaded_file):
             df = pd.read_csv(uploaded_file, encoding="latin1")
     elif suffix in [".xlsx", ".xls"]:
         df = pd.read_excel(uploaded_file)
+    elif suffix == ".zip":
+        uploaded_file.seek(0)
+        zip_bytes = io.BytesIO(uploaded_file.read())
+
+        with zipfile.ZipFile(zip_bytes, "r") as zf:
+            csv_files = [name for name in zf.namelist() if name.lower().endswith(".csv")]
+
+            if not csv_files:
+                raise ValueError("El archivo ZIP no contiene ningún archivo CSV.")
+
+            csv_name = csv_files[0]
+
+            with zf.open(csv_name) as csv_file:
+                try:
+                    df = pd.read_csv(csv_file)
+                except Exception:
+                    with zf.open(csv_name) as csv_file_latin:
+                        df = pd.read_csv(csv_file_latin, encoding="latin1")
     else:
-        raise ValueError("Formato no soportado. Usa CSV o Excel.")
+        raise ValueError("Formato no soportado. Usa CSV, Excel o ZIP.")
 
     return df
 
@@ -435,7 +454,7 @@ def generate_pdf_report(df, fig_temp, fig_hum, events_df, temp_limits, hum_limit
 # ---------------------------
 with st.sidebar:
     st.header("⚙️ Configuración")
-    uploaded_file = st.file_uploader("Sube CSV o Excel", type=["csv", "xlsx", "xls"])
+    uploaded_file = st.file_uploader("Sube CSV, Excel o ZIP", type=["csv", "xlsx", "xls", "zip"])
 
     st.subheader("Límites de alarma")
     temp_low = st.number_input("Temperatura mínima (°C)", value=20.0, step=0.5)
@@ -468,7 +487,7 @@ with st.sidebar:
 # Carga y preparación
 # ---------------------------
 if uploaded_file is None:
-    st.info("Sube un archivo CSV o Excel del SensorPush para comenzar.")
+    st.info("Sube un archivo CSV, Excel o ZIP del SensorPush para comenzar.")
     st.stop()
 
 try:
