@@ -1,4 +1,3 @@
-
 import io
 from pathlib import Path
 
@@ -18,7 +17,7 @@ st.set_page_config(
 )
 
 st.title("📊 SensorPush Pro v4")
-st.caption("Dashboard avanzado con gráficas dinámicas, sombreado fuera de rango, KPI de cumplimiento, criterio Δ temperatura / Δ humedad relativa y exportación de reportes.")
+st.caption("Dashboard avanzado con gráficas dinámicas, sombreado fuera de rango, KPI de cumplimiento y exportación de reportes.")
 
 
 # ---------------------------
@@ -160,13 +159,6 @@ def compute_compliance(series: pd.Series, low: float, high: float):
     return (ok / len(valid)) * 100
 
 
-def compute_range_delta(series: pd.Series):
-    valid = series.dropna()
-    if len(valid) == 0:
-        return None
-    return float(valid.max() - valid.min())
-
-
 def classify_state(value, low, high):
     if pd.isna(value):
         return "Sin dato"
@@ -190,7 +182,11 @@ def duration_out_of_range(df: pd.DataFrame, col: str, low: float, high: float):
     work = df[["Marca de Tiempo", col]].dropna().sort_values("Marca de Tiempo").copy()
     if len(work) < 2:
         count = int(out_of_range_mask(work[col], low, high).sum()) if not work.empty else 0
-        return {"registros": count, "minutos_estimados": 0.0, "porcentaje_registros": 0.0 if work.empty else (count / len(work)) * 100}
+        return {
+            "registros": count,
+            "minutos_estimados": 0.0,
+            "porcentaje_registros": 0.0 if work.empty else (count / len(work)) * 100
+        }
 
     mask = out_of_range_mask(work[col], low, high)
     step_min = compute_sampling_minutes(work) or 0
@@ -314,9 +310,12 @@ def build_matplotlib_chart(df: pd.DataFrame, y_col: str, title: str, y_label: st
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ymin = min(df[y_col].min(), low) if df[y_col].notna().any() else low
     ymax = max(df[y_col].max(), high) if df[y_col].notna().any() else high
-    ax.add_patch(Rectangle((mdates.date2num(df["Marca de Tiempo"].min()), low),
-                           width=mdates.date2num(df["Marca de Tiempo"].max()) - mdates.date2num(df["Marca de Tiempo"].min()),
-                           height=high-low, alpha=0.12))
+    ax.add_patch(Rectangle(
+        (mdates.date2num(df["Marca de Tiempo"].min()), low),
+        width=mdates.date2num(df["Marca de Tiempo"].max()) - mdates.date2num(df["Marca de Tiempo"].min()),
+        height=high - low,
+        alpha=0.12
+    ))
     ax.plot(df["Marca de Tiempo"], df[y_col], linewidth=1.8, label=y_col)
     ax.axhline(low, linestyle="--", label=f"Límite inferior ({low})")
     ax.axhline(high, linestyle="--", label=f"Límite superior ({high})")
@@ -346,7 +345,20 @@ def fig_to_bytes(fig):
     return buf.getvalue()
 
 
-def generate_pdf_report(df, fig_temp, fig_hum, events_df, temp_limits, hum_limits, temp_compliance, hum_compliance):
+def generate_pdf_report(
+    df,
+    fig_temp,
+    fig_hum,
+    events_df,
+    temp_limits,
+    hum_limits,
+    temp_compliance,
+    hum_compliance,
+    delta_temp,
+    delta_hum,
+    temp_delta_ok,
+    hum_delta_ok
+):
     pdf_buffer = io.BytesIO()
 
     with PdfPages(pdf_buffer) as pdf:
@@ -369,6 +381,11 @@ def generate_pdf_report(df, fig_temp, fig_hum, events_df, temp_limits, hum_limit
             "",
             f"Cumplimiento temperatura: {temp_compliance:.2f}%",
             f"Cumplimiento humedad: {hum_compliance:.2f}%",
+            "",
+            f"Δ temperatura: {delta_temp:.2f} °C" if delta_temp is not None else "Δ temperatura: N/D",
+            f"Criterio Δ temperatura (≤ 2 °C): {'Cumple' if temp_delta_ok else 'No cumple'}",
+            f"Δ humedad relativa: {delta_hum:.2f} %" if delta_hum is not None else "Δ humedad relativa: N/D",
+            f"Criterio Δ humedad relativa (≤ 5 %): {'Cumple' if hum_delta_ok else 'No cumple'}",
             "",
             "Resumen temperatura:",
             f"  - Mínimo: {temp_stats['mínimo']:.2f} °C" if temp_stats["mínimo"] is not None else "  - Sin datos",
@@ -446,7 +463,7 @@ with st.sidebar:
     show_processed = st.checkbox("Mostrar datos procesados", value=True)
 
     st.markdown("---")
-    st.caption("v4 añade KPI de cumplimiento, selector de visualización y sombreado de rango aceptable.")
+    st.caption("v4 añade KPI de cumplimiento, selector de visualización, sombreado de rango aceptable y validación de ΔT / ΔHR.")
 
 
 # ---------------------------
@@ -484,13 +501,23 @@ processed_export = build_processed_export(df_view, temp_low, temp_high, hum_low,
 temp_stats = summarize_series(df_view["Temperatura"])
 hum_stats = summarize_series(df_view["Humedad"])
 
+delta_temp = None
+delta_hum = None
+
+if temp_stats["máximo"] is not None and temp_stats["mínimo"] is not None:
+    delta_temp = temp_stats["máximo"] - temp_stats["mínimo"]
+
+if hum_stats["máximo"] is not None and hum_stats["mínimo"] is not None:
+    delta_hum = hum_stats["máximo"] - hum_stats["mínimo"]
+
+temp_delta_ok = delta_temp is not None and delta_temp <= 2
+hum_delta_ok = delta_hum is not None and delta_hum <= 5
+
 temp_out = duration_out_of_range(df_view, "Temperatura", temp_low, temp_high)
 hum_out = duration_out_of_range(df_view, "Humedad", hum_low, hum_high)
 
 temp_compliance = compute_compliance(df_view["Temperatura"], temp_low, temp_high)
 hum_compliance = compute_compliance(df_view["Humedad"], hum_low, hum_high)
-temp_delta = compute_range_delta(df_view["Temperatura"])
-hum_delta = compute_range_delta(df_view["Humedad"])
 
 events_temp = find_events(df_view, "Temperatura", temp_low, temp_high, "Temperatura")
 events_hum = find_events(df_view, "Humedad", hum_low, hum_high, "Humedad")
@@ -506,37 +533,35 @@ r2.metric("Cumplimiento temp.", f"{temp_compliance:.2f}%")
 r3.metric("Cumplimiento humedad", f"{hum_compliance:.2f}%")
 r4.metric("Eventos fuera de rango", f"{len(events_df)}")
 
-r5, r6, r7, r8 = st.columns(4)
+r5, r6, r7, r8, r9, r10 = st.columns(6)
 r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
 r6.metric("Prom. humedad", f"{hum_stats['promedio']:.2f} %" if hum_stats["promedio"] is not None else "N/D")
 r7.metric("Min. temp. / Máx. temp.", f"{temp_stats['mínimo']:.2f} / {temp_stats['máximo']:.2f}" if temp_stats["mínimo"] is not None else "N/D")
 r8.metric("Min. HR / Máx. HR", f"{hum_stats['mínimo']:.2f} / {hum_stats['máximo']:.2f}" if hum_stats["mínimo"] is not None else "N/D")
-
-r9, r10 = st.columns(2)
 r9.metric(
-    "Δ temperatura (máx - mín)",
-    f"{temp_delta:.2f} °C" if temp_delta is not None else "N/D",
-    delta="Cumple ≤ 2 °C" if temp_delta is not None and temp_delta <= 2 else "No cumple > 2 °C" if temp_delta is not None else None
+    "Δ Temperatura",
+    f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+    "Cumple" if temp_delta_ok else "No cumple"
 )
 r10.metric(
-    "Δ humedad relativa (máx - mín)",
-    f"{hum_delta:.2f} %" if hum_delta is not None else "N/D",
-    delta="Cumple ≤ 5 % HR" if hum_delta is not None and hum_delta <= 5 else "No cumple > 5 % HR" if hum_delta is not None else None
+    "Δ Humedad relativa",
+    f"{delta_hum:.2f} %" if delta_hum is not None else "N/D",
+    "Cumple" if hum_delta_ok else "No cumple"
 )
 
-if temp_delta is not None:
-    if temp_delta <= 2:
-        st.success(f"La diferencia entre la temperatura máxima y mínima es {temp_delta:.2f} °C y cumple el criterio de no ser mayor a 2 °C.")
-    else:
-        st.warning(f"La diferencia entre la temperatura máxima y mínima es {temp_delta:.2f} °C y no cumple el criterio, porque supera 2 °C.")
-
-if hum_delta is not None:
-    if hum_delta <= 5:
-        st.success(f"La diferencia entre la humedad relativa máxima y mínima es {hum_delta:.2f} % y cumple el criterio de no ser mayor a 5 % HR.")
-    else:
-        st.warning(f"La diferencia entre la humedad relativa máxima y mínima es {hum_delta:.2f} % y no cumple el criterio, porque supera 5 % HR.")
-
 st.progress(min((temp_compliance + hum_compliance) / 200, 1.0), text=f"Cumplimiento global promedio: {((temp_compliance + hum_compliance)/2):.2f}%")
+
+if delta_temp is not None:
+    if temp_delta_ok:
+        st.success("Δ Temperatura cumple el criterio de aceptación (≤ 2 °C).")
+    else:
+        st.error("Δ Temperatura supera el criterio de aceptación (≤ 2 °C).")
+
+if delta_hum is not None:
+    if hum_delta_ok:
+        st.success("Δ Humedad relativa cumple el criterio de aceptación (≤ 5 %).")
+    else:
+        st.error("Δ Humedad relativa supera el criterio de aceptación (≤ 5 %).")
 
 st.markdown("---")
 
@@ -581,8 +606,12 @@ with tab1:
             msgs.append(f"Temperatura fuera de criterio en {temp_out['registros']} registros.")
         if hum_compliance < 100:
             msgs.append(f"Humedad fuera de criterio en {hum_out['registros']} registros.")
+        if delta_temp is not None and not temp_delta_ok:
+            msgs.append("Δ Temperatura no cumple.")
+        if delta_hum is not None and not hum_delta_ok:
+            msgs.append("Δ Humedad relativa no cumple.")
         if not msgs:
-            st.success("Todas las mediciones visibles cumplen con los límites establecidos.")
+            st.success("Todas las mediciones visibles cumplen con los límites establecidos y con los criterios de Δ.")
         else:
             st.warning(" ".join(msgs))
 
@@ -642,7 +671,11 @@ with tab4:
         (temp_low, temp_high),
         (hum_low, hum_high),
         temp_compliance,
-        hum_compliance
+        hum_compliance,
+        delta_temp,
+        delta_hum,
+        temp_delta_ok,
+        hum_delta_ok
     )
 
     d1, d2 = st.columns(2)
@@ -689,6 +722,10 @@ with tab5:
         "Porcentaje humedad fuera de rango": round(hum_out["porcentaje_registros"], 2),
         "Minutos estimados temp. fuera de rango": round(temp_out["minutos_estimados"], 1),
         "Minutos estimados humedad fuera de rango": round(hum_out["minutos_estimados"], 1),
+        "Δ Temperatura (°C)": round(delta_temp, 2) if delta_temp is not None else None,
+        "Cumple Δ Temperatura (≤ 2 °C)": temp_delta_ok,
+        "Δ Humedad relativa (%)": round(delta_hum, 2) if delta_hum is not None else None,
+        "Cumple Δ Humedad relativa (≤ 5 %)": hum_delta_ok,
     })
 
     st.markdown("**Columnas detectadas**")
