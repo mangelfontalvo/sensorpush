@@ -345,6 +345,27 @@ def fig_to_bytes(fig):
     return buf.getvalue()
 
 
+def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Datos procesados"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        ws = writer.sheets[sheet_name]
+
+        for col in ws.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                try:
+                    cell_value = "" if cell.value is None else str(cell.value)
+                    max_length = max(max_length, len(cell_value))
+                except Exception:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max_length + 2, 30)
+
+    output.seek(0)
+    return output.getvalue()
+
+
 def generate_pdf_report(
     df,
     fig_temp,
@@ -663,6 +684,7 @@ with tab4:
     temp_png = fig_to_bytes(fig_temp_static)
     hum_png = fig_to_bytes(fig_hum_static)
     csv_bytes = processed_export.to_csv(index=False).encode("utf-8-sig")
+    excel_bytes = dataframe_to_excel_bytes(processed_export, sheet_name="Datos procesados")
     pdf_bytes = generate_pdf_report(
         df_view,
         fig_temp_static,
@@ -692,6 +714,13 @@ with tab4:
             data=csv_bytes,
             file_name="datos_procesados_sensorpush_v4.csv",
             mime="text/csv",
+            use_container_width=True,
+        )
+        st.download_button(
+            "Descargar datos procesados (Excel)",
+            data=excel_bytes,
+            file_name="datos_procesados_sensorpush_v4.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
     with d2:
