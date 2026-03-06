@@ -1,13 +1,18 @@
-# SensorPush Pro
+# SensorPush Pro v4
 
-App web en Streamlit para:
-- Cargar CSV o Excel del SensorPush
-- Graficar temperatura y humedad
-- Configurar límites dinámicos
-- Filtrar por fecha
-- Agrupar datos por intervalo
-- Detectar eventos fuera de rango
-- Descargar PNG, CSV y PDF
+Dashboard avanzado para monitoreo de temperatura y humedad.
+
+## Incluye
+- carga de CSV o Excel
+- detección automática de columnas
+- gráficas interactivas con Plotly
+- selector: ambas variables / solo temperatura / solo humedad
+- sombreado visual del rango aceptable
+- KPI de cumplimiento por variable
+- filtro por fechas
+- agrupación por intervalo
+- eventos fuera de rango
+- exportación de PNG, CSV y PDF
 
 ## Ejecutar localmente
 ```bash
@@ -15,7 +20,5 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Publicar gratis
-1. Sube `app.py`, `requirements.txt` y `README.md` a GitHub.
-2. Entra a Streamlit Community Cloud.
-3. Conecta el repositorio y selecciona `app.py`.
+## Publicación gratis
+Sube `app.py`, `requirements.txt` y `README.md` a GitHub y publícala en Streamlit Community Cloud.
