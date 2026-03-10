@@ -1,4 +1,3 @@
-
 import io
 import zipfile
 from pathlib import Path
@@ -132,6 +131,7 @@ def apply_resample(df: pd.DataFrame, freq: str):
         return df.copy()
 
     freq_map = {
+        "Cada 2 minutos": "2min",
         "Cada 15 minutos": "15min",
         "Cada 30 minutos": "30min",
         "Cada 1 hora": "1h",
@@ -202,7 +202,11 @@ def duration_out_of_range(df: pd.DataFrame, col: str, low: float, high: float):
     work = df[["Marca de Tiempo", col]].dropna().sort_values("Marca de Tiempo").copy()
     if len(work) < 2:
         count = int(out_of_range_mask(work[col], low, high).sum()) if not work.empty else 0
-        return {"registros": count, "minutos_estimados": 0.0, "porcentaje_registros": 0.0 if work.empty else (count / len(work)) * 100}
+        return {
+            "registros": count,
+            "minutos_estimados": 0.0,
+            "porcentaje_registros": 0.0 if work.empty else (count / len(work)) * 100
+        }
 
     mask = out_of_range_mask(work[col], low, high)
     step_min = compute_sampling_minutes(work) or 0
@@ -326,9 +330,16 @@ def build_matplotlib_chart(df: pd.DataFrame, y_col: str, title: str, y_label: st
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ymin = min(df[y_col].min(), low) if df[y_col].notna().any() else low
     ymax = max(df[y_col].max(), high) if df[y_col].notna().any() else high
-    ax.add_patch(Rectangle((mdates.date2num(df["Marca de Tiempo"].min()), low),
-                           width=mdates.date2num(df["Marca de Tiempo"].max()) - mdates.date2num(df["Marca de Tiempo"].min()),
-                           height=high-low, alpha=0.12))
+
+    ax.add_patch(
+        Rectangle(
+            (mdates.date2num(df["Marca de Tiempo"].min()), low),
+            width=mdates.date2num(df["Marca de Tiempo"].max()) - mdates.date2num(df["Marca de Tiempo"].min()),
+            height=high - low,
+            alpha=0.12
+        )
+    )
+
     ax.plot(df["Marca de Tiempo"], df[y_col], linewidth=1.8, label=y_col)
     ax.axhline(low, linestyle="--", label=f"Límite inferior ({low})")
     ax.axhline(high, linestyle="--", label=f"Límite superior ({high})")
@@ -376,7 +387,20 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Datos procesad
     return output.getvalue()
 
 
-def generate_pdf_report(df, fig_temp, fig_hum, events_df, temp_limits, hum_limits, temp_compliance, hum_compliance, delta_temp=None, delta_hum=None, temp_delta_ok=None, hum_delta_ok=None):
+def generate_pdf_report(
+    df,
+    fig_temp,
+    fig_hum,
+    events_df,
+    temp_limits,
+    hum_limits,
+    temp_compliance,
+    hum_compliance,
+    delta_temp=None,
+    delta_hum=None,
+    temp_delta_ok=None,
+    hum_delta_ok=None
+):
     pdf_buffer = io.BytesIO()
 
     with PdfPages(pdf_buffer) as pdf:
@@ -465,7 +489,15 @@ with st.sidebar:
     st.subheader("Agrupación de datos")
     freq = st.selectbox(
         "Frecuencia de visualización",
-        ["Sin agrupar", "Cada 15 minutos", "Cada 30 minutos", "Cada 1 hora", "Cada 6 horas", "Diario"],
+        [
+            "Sin agrupar",
+            "Cada 2 minutos",
+            "Cada 15 minutos",
+            "Cada 30 minutos",
+            "Cada 1 hora",
+            "Cada 6 horas",
+            "Diario"
+        ],
         index=0
     )
 
