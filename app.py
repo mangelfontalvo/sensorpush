@@ -70,18 +70,16 @@ def detect_columns(df: pd.DataFrame):
     return time_col, temp_col, hum_col
 
 
-def sanitize_filename(name: str) -> str:
+def clean_filename(name: str) -> str:
     name = str(name).strip()
     if not name:
         return "sensorpush_reporte"
 
-    allowed = []
-    for ch in name:
-        if ch.isalnum() or ch in ("-", "_", " "):
-            allowed.append(ch)
+    invalid_chars = '<>:"/\\|?*'
+    for ch in invalid_chars:
+        name = name.replace(ch, "_")
 
-    cleaned = "".join(allowed).strip().replace(" ", "_")
-    return cleaned if cleaned else "sensorpush_reporte"
+    return name
 
 
 def load_data(uploaded_file):
@@ -527,10 +525,18 @@ with st.sidebar:
 
     st.subheader("Nombre de archivos")
     base_filename_input = st.text_input(
-        "Nombre base para descargas",
-        value="sensorpush_reporte"
+        "Escribe el nombre base de los archivos",
+        value="sensorpush_reporte",
+        key="base_filename_input",
+        help="Ejemplo: monitoreo_bodega_marzo"
     )
-    base_filename = sanitize_filename(base_filename_input)
+
+    base_filename = clean_filename(base_filename_input)
+
+    if not base_filename.strip():
+        base_filename = "sensorpush_reporte"
+
+    st.caption(f"Nombre base actual: {base_filename}")
 
     st.markdown("---")
     st.caption("v6 añade agrupación cada 2 minutos y permite personalizar el nombre de los archivos descargables.")
@@ -568,8 +574,6 @@ if df.empty:
 df_view = apply_resample(df, freq)
 processed_export = build_processed_export(df_view, temp_low, temp_high, hum_low, hum_high)
 
-# El resumen ejecutivo debe calcularse con los datos filtrados originales
-# y no con la serie agrupada, para evitar alterar mínimos, máximos, promedios y deltas.
 df_metrics = df.copy()
 
 temp_stats = summarize_series(df_metrics["Temperatura"])
