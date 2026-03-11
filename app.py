@@ -12,13 +12,13 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="SensorPush Pro v4",
+    page_title="SensorPush Pro v6",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("📊 SensorPush Pro v5")
-st.caption("Dashboard avanzado con gráficas dinámicas, sombreado fuera de rango, KPI de cumplimiento, resumen ejecutivo corregido y exportación de reportes.")
+st.title("📊 SensorPush Pro v6")
+st.caption("Dashboard avanzado con gráficas dinámicas, sombreado fuera de rango, KPI de cumplimiento, resumen ejecutivo corregido, agrupación cada 2 minutos y nombres personalizables para descargas.")
 
 
 # ---------------------------
@@ -68,6 +68,20 @@ def detect_columns(df: pd.DataFrame):
             break
 
     return time_col, temp_col, hum_col
+
+
+def sanitize_filename(name: str) -> str:
+    name = str(name).strip()
+    if not name:
+        return "sensorpush_reporte"
+
+    allowed = []
+    for ch in name:
+        if ch.isalnum() or ch in ("-", "_", " "):
+            allowed.append(ch)
+
+    cleaned = "".join(allowed).strip().replace(" ", "_")
+    return cleaned if cleaned else "sensorpush_reporte"
 
 
 def load_data(uploaded_file):
@@ -413,7 +427,7 @@ def generate_pdf_report(
         end = df["Marca de Tiempo"].max()
 
         lines = [
-            "REPORTE SENSORPUSH PRO V5",
+            "REPORTE SENSORPUSH PRO V6",
             "",
             f"Periodo analizado: {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M}",
             f"Registros: {len(df)}",
@@ -511,8 +525,15 @@ with st.sidebar:
     show_raw = st.checkbox("Mostrar datos originales", value=False)
     show_processed = st.checkbox("Mostrar datos procesados", value=True)
 
+    st.subheader("Nombre de archivos")
+    base_filename_input = st.text_input(
+        "Nombre base para descargas",
+        value="sensorpush_reporte"
+    )
+    base_filename = sanitize_filename(base_filename_input)
+
     st.markdown("---")
-    st.caption("v5 corrige el resumen ejecutivo, añade validación de ΔT / ΔHR y descarga de datos procesados en Excel.")
+    st.caption("v6 añade agrupación cada 2 minutos y permite personalizar el nombre de los archivos descargables.")
 
 
 # ---------------------------
@@ -572,7 +593,11 @@ hum_compliance = compute_compliance(df_metrics["Humedad"], hum_low, hum_high)
 
 events_temp = find_events(df_view, "Temperatura", temp_low, temp_high, "Temperatura")
 events_hum = find_events(df_view, "Humedad", hum_low, hum_high, "Humedad")
-events_df = pd.concat([events_temp, events_hum], ignore_index=True).sort_values("Inicio") if not events_temp.empty or not events_hum.empty else pd.DataFrame()
+events_df = (
+    pd.concat([events_temp, events_hum], ignore_index=True).sort_values("Inicio")
+    if not events_temp.empty or not events_hum.empty
+    else pd.DataFrame()
+)
 
 # ---------------------------
 # KPIs
@@ -594,7 +619,12 @@ r9, r10, r11, r12 = st.columns(4)
 r9.metric("Mín. HR", f"{hum_stats['mínimo']:.2f} %" if hum_stats["mínimo"] is not None else "N/D")
 r10.metric("Máx. HR", f"{hum_stats['máximo']:.2f} %" if hum_stats["máximo"] is not None else "N/D")
 r11.metric("Δ Temperatura", f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D", delta="Cumple" if temp_delta_ok else "No cumple")
-r12.metric("Δ Humedad relativa", f"{delta_hum:.2f} %" if delta_hum is not None else "N/D", delta="Cumple" if hum_delta_ok else "No cumple", delta_color="normal" if hum_delta_ok else "inverse")
+r12.metric(
+    "Δ Humedad relativa",
+    f"{delta_hum:.2f} %" if delta_hum is not None else "N/D",
+    delta="Cumple" if hum_delta_ok else "No cumple",
+    delta_color="normal" if hum_delta_ok else "inverse"
+)
 
 st.progress(min((temp_compliance + hum_compliance) / 200, 1.0), text=f"Cumplimiento global promedio: {((temp_compliance + hum_compliance)/2):.2f}%")
 
@@ -730,36 +760,37 @@ with tab4:
         st.download_button(
             "Descargar gráfico de temperatura (PNG)",
             data=temp_png,
-            file_name="grafico_temperatura_v5.png",
+            file_name=f"{base_filename}_grafico_temperatura.png",
             mime="image/png",
             use_container_width=True,
         )
         st.download_button(
             "Descargar datos procesados (CSV)",
             data=csv_bytes,
-            file_name="datos_procesados_sensorpush_v5.csv",
+            file_name=f"{base_filename}_datos_procesados.csv",
             mime="text/csv",
             use_container_width=True,
         )
         st.download_button(
             "Descargar datos procesados (Excel)",
             data=excel_bytes,
-            file_name="datos_procesados_sensorpush_v5.xlsx",
+            file_name=f"{base_filename}_datos_procesados.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+
     with d2:
         st.download_button(
             "Descargar gráfico de humedad (PNG)",
             data=hum_png,
-            file_name="grafico_humedad_v5.png",
+            file_name=f"{base_filename}_grafico_humedad.png",
             mime="image/png",
             use_container_width=True,
         )
         st.download_button(
             "Descargar reporte PDF",
             data=pdf_bytes,
-            file_name="reporte_sensorpush_v5.pdf",
+            file_name=f"{base_filename}_reporte.pdf",
             mime="application/pdf",
             use_container_width=True,
         )
