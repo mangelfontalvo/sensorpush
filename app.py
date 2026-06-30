@@ -12,15 +12,15 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="SensorPush Pro v8",
+    page_title="SensorPush Pro v9",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("📊 SensorPush Pro v8")
+st.title("📊 SensorPush Pro v9")
 st.caption(
     "Modo dual: SensorPush (temperatura + humedad) y Solo Temperatura (neveras, cámaras frías). "
-    "Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción."
+    "Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción, con presets por equipo."
 )
 
 
@@ -146,18 +146,19 @@ def load_data_solo_temp(uploaded_file):
 # CLASIFICACIÓN DE NIVELES (Solo Temperatura)
 # Niveles: "Seguro" | "Alerta" | "Acción" | "Sin dato"
 # Lógica basada en tabla FAO / Innova Eats:
-#   Seguro   : temp_low  <= T <= temp_high
-#   Alerta   : (alert_low <= T < temp_low) o (temp_high < T <= alert_high)
-#   Acción   : T < action_low  o  T > action_high
+#   Seguro : temp_low <= T <= temp_high
+#   Alerta : zona intermedia entre el límite seguro y el límite de acción,
+#            a cualquiera de los dos lados (frío o caliente)
+#   Acción : T < action_low  o  T > action_high
 # ===========================================================
-def classify_nivel(value, temp_low, temp_high, alert_low, alert_high, action_low, action_high):
+def classify_nivel(value, temp_low, temp_high, action_low, action_high):
     if pd.isna(value):
         return "Sin dato"
     if temp_low <= value <= temp_high:
         return "Seguro"
-    if alert_low <= value <= alert_high:
-        return "Alerta"
-    return "Acción"
+    if value < temp_low:
+        return "Acción" if value < action_low else "Alerta"
+    return "Acción" if value > action_high else "Alerta"
 
 # Color por nivel
 NIVEL_COLOR = {
@@ -222,13 +223,10 @@ def build_processed_export_sensorpush(df, temp_low, temp_high, hum_low, hum_high
     return out
 
 def build_processed_export_solo_temp(df, temp_low, temp_high,
-                                      alert_low, alert_high,
                                       action_low, action_high):
     out = df.copy()
     out["Nivel"] = out["Temperatura"].apply(
-        lambda x: classify_nivel(x, temp_low, temp_high,
-                                  alert_low, alert_high,
-                                  action_low, action_high)
+        lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
     )
     return out
 
@@ -273,8 +271,7 @@ def find_events(df: pd.DataFrame, value_col: str, low: float, high: float, label
     return pd.DataFrame(events)
 
 # Versión con nivel para modo Solo Temperatura
-def find_events_niveles(df: pd.DataFrame, temp_low, temp_high,
-                         alert_low, alert_high, action_low, action_high):
+def find_events_niveles(df: pd.DataFrame, temp_low, temp_high, action_low, action_high):
     """Devuelve events_alerta y events_accion como DataFrames separados."""
     empty_cols = ["Nivel","Inicio","Fin","Duración (min)","Tipo","Mínimo","Máximo","Promedio","N registros"]
     work = df[["Marca de Tiempo","Temperatura"]].dropna().copy()
@@ -282,9 +279,7 @@ def find_events_niveles(df: pd.DataFrame, temp_low, temp_high,
         return pd.DataFrame(columns=empty_cols), pd.DataFrame(columns=empty_cols)
 
     work["Nivel"] = work["Temperatura"].apply(
-        lambda x: classify_nivel(x, temp_low, temp_high,
-                                  alert_low, alert_high,
-                                  action_low, action_high)
+        lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
     )
     work["Fuera"] = work["Nivel"].isin(["Alerta", "Acción"])
 
@@ -359,14 +354,13 @@ def build_plotly_chart(df, y_col, title, y_label, low, high, show_markers=True):
 # VISUALIZACIÓN — SOLO TEMPERATURA (3 niveles con colores)
 # ===========================================================
 def build_plotly_chart_niveles(df, temp_low, temp_high,
-                                alert_low, alert_high,
                                 action_low, action_high,
                                 show_markers=True):
     """
     Gráfica Plotly con 3 zonas de color:
-      Verde  → rango seguro    [temp_low, temp_high]
-      Amarillo → zona alerta   [alert_low,temp_low) ∪ (temp_high, alert_high]
-      Rojo   → zona acción     < action_low  o  > action_high
+      Verde   → rango seguro   [temp_low, temp_high]
+      Amarillo→ zona alerta    [action_low, temp_low) ∪ (temp_high, action_high]
+      Rojo    → zona acción    < action_low  o  > action_high
     """
     fig = go.Figure()
 
@@ -378,28 +372,24 @@ def build_plotly_chart_niveles(df, temp_low, temp_high,
     fig.add_hrect(y0=y_min_plot, y1=action_low,
                   fillcolor="#e74c3c", opacity=0.08, line_width=0)
     # Zona ALERTA inferior
-    fig.add_hrect(y0=action_low, y1=alert_low,
+    fig.add_hrect(y0=action_low, y1=temp_low,
                   fillcolor="#f39c12", opacity=0.10, line_width=0)
     # Zona SEGURA
     fig.add_hrect(y0=temp_low, y1=temp_high,
                   fillcolor="#2ecc71", opacity=0.12, line_width=0,
                   annotation_text="Seguro", annotation_position="top left")
     # Zona ALERTA superior
-    fig.add_hrect(y0=alert_high, y1=temp_high,   # se dibuja temp_high→alert_high
-                  fillcolor="#f39c12", opacity=0.10, line_width=0)
-    fig.add_hrect(y0=temp_high, y1=alert_high,
+    fig.add_hrect(y0=temp_high, y1=action_high,
                   fillcolor="#f39c12", opacity=0.10, line_width=0)
     # Zona ACCIÓN superior
-    fig.add_hrect(y0=alert_high, y1=y_max_plot,
+    fig.add_hrect(y0=action_high, y1=y_max_plot,
                   fillcolor="#e74c3c", opacity=0.08, line_width=0)
 
     # ---- Líneas de límite ----
     for y, label, color in [
         (action_low,  f"Acción inf. ({action_low}°C)",  "#c0392b"),
-        (alert_low,   f"Alerta inf. ({alert_low}°C)",   "#e67e22"),
         (temp_low,    f"Seguro inf. ({temp_low}°C)",    "#27ae60"),
         (temp_high,   f"Seguro sup. ({temp_high}°C)",   "#27ae60"),
-        (alert_high,  f"Alerta sup. ({alert_high}°C)",  "#e67e22"),
         (action_high, f"Acción sup. ({action_high}°C)", "#c0392b"),
     ]:
         fig.add_hline(y=y, line_dash="dash", line_color=color,
@@ -418,9 +408,7 @@ def build_plotly_chart_niveles(df, temp_low, temp_high,
     if show_markers:
         for nivel, color in [("Alerta", "#f39c12"), ("Acción", "#e74c3c")]:
             mask = df["Temperatura"].apply(
-                lambda x: classify_nivel(x, temp_low, temp_high,
-                                          alert_low, alert_high,
-                                          action_low, action_high)
+                lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
             ) == nivel
             pts = df.loc[mask, ["Marca de Tiempo","Temperatura"]].dropna()
             if not pts.empty:
@@ -473,7 +461,6 @@ def build_matplotlib_chart(df, y_col, title, y_label, low, high):
     return fig
 
 def build_matplotlib_chart_niveles(df, temp_low, temp_high,
-                                    alert_low, alert_high,
                                     action_low, action_high):
     fig, ax = plt.subplots(figsize=(12, 5.5))
     y_vals = df["Temperatura"].dropna()
@@ -484,22 +471,19 @@ def build_matplotlib_chart_niveles(df, temp_low, temp_high,
         w = mdates.date2num(t_max) - mdates.date2num(t_min)
         x0 = mdates.date2num(t_min)
         # Zonas
-        ax.add_patch(Rectangle((x0, action_low),    w, alert_low-action_low,   alpha=0.10, color="#f39c12"))
-        ax.add_patch(Rectangle((x0, temp_low),      w, temp_high-temp_low,     alpha=0.12, color="#2ecc71"))
-        ax.add_patch(Rectangle((x0, temp_high),     w, alert_high-temp_high,   alpha=0.10, color="#f39c12"))
-        ax.add_patch(Rectangle((x0, alert_low),     w, temp_low-alert_low,     alpha=0.10, color="#f39c12"))
-        ax.add_patch(Rectangle((x0, alert_high),    w, ymax-alert_high,        alpha=0.08, color="#e74c3c"))
-        ax.add_patch(Rectangle((x0, ymin),          w, action_low-ymin,        alpha=0.08, color="#e74c3c"))
+        ax.add_patch(Rectangle((x0, ymin),        w, action_low-ymin,      alpha=0.08, color="#e74c3c"))
+        ax.add_patch(Rectangle((x0, action_low),  w, temp_low-action_low,  alpha=0.10, color="#f39c12"))
+        ax.add_patch(Rectangle((x0, temp_low),    w, temp_high-temp_low,   alpha=0.12, color="#2ecc71"))
+        ax.add_patch(Rectangle((x0, temp_high),   w, action_high-temp_high,alpha=0.10, color="#f39c12"))
+        ax.add_patch(Rectangle((x0, action_high), w, ymax-action_high,     alpha=0.08, color="#e74c3c"))
 
     ax.plot(df["Marca de Tiempo"], df["Temperatura"], linewidth=1.8,
             label="Temperatura", color="#2c3e50", zorder=5)
 
     for y, label, color in [
         (action_low,  f"Acción inf. ({action_low})", "#c0392b"),
-        (alert_low,   f"Alerta inf. ({alert_low})",  "#e67e22"),
         (temp_low,    f"Seguro inf. ({temp_low})",   "#27ae60"),
         (temp_high,   f"Seguro sup. ({temp_high})",  "#27ae60"),
-        (alert_high,  f"Alerta sup. ({alert_high})", "#e67e22"),
         (action_high, f"Acción sup. ({action_high})","#c0392b"),
     ]:
         ax.axhline(y, linestyle="--", color=color, linewidth=0.9, label=label)
@@ -507,9 +491,7 @@ def build_matplotlib_chart_niveles(df, temp_low, temp_high,
     # Marcadores alerta/acción
     for nivel, color in [("Alerta","#f39c12"),("Acción","#e74c3c")]:
         mask = df["Temperatura"].apply(
-            lambda x: classify_nivel(x, temp_low, temp_high,
-                                      alert_low, alert_high,
-                                      action_low, action_high)
+            lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
         ) == nivel
         pts = df.loc[mask, ["Marca de Tiempo","Temperatura"]].dropna()
         if not pts.empty:
@@ -587,8 +569,7 @@ def generate_pdf_report_sensorpush(df, fig_temp, fig_hum, events_df,
 # PDF — SOLO TEMPERATURA (3 niveles)
 # ===========================================================
 def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
-                                   temp_low, temp_high, alert_low, alert_high,
-                                   action_low, action_high,
+                                   temp_low, temp_high, action_low, action_high,
                                    temp_compliance, n_alerta, n_accion,
                                    delta_temp=None, temp_delta_ok=None):
     pdf_buffer = io.BytesIO()
@@ -597,7 +578,7 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
         ts = summarize_series(df["Temperatura"])
         start, end = df["Marca de Tiempo"].min(), df["Marca de Tiempo"].max()
         lines = [
-            "REPORTE SENSORPUSH PRO V8 — SOLO TEMPERATURA",
+            "REPORTE SENSORPUSH PRO V9 — SOLO TEMPERATURA",
             f"Referencia: Sistema de niveles FAO / Innova Eats",
             "",
             f"Periodo: {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M}",
@@ -605,7 +586,7 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
             "",
             "LÍMITES DE OPERACIÓN:",
             f"  Parámetro seguro (Innova Eats): {temp_low} – {temp_high} °C",
-            f"  Alerta y seguimiento:           < {alert_low} °C  |  {alert_high} – 10 °C",
+            f"  Alerta y seguimiento:           {action_low} – {temp_low} °C  |  {temp_high} – {action_high} °C",
             f"  Parámetro de acción:            < {action_low} °C  |  > {action_high} °C",
             "",
             "RESUMEN DE CUMPLIMIENTO:",
@@ -643,6 +624,50 @@ def _pdf_events_table(pdf, events_df, title="Eventos fuera de rango"):
 
 
 # ===========================================================
+# PRESETS DE EQUIPOS — Límites FAO / Innova Eats
+# (Seguro = temp_low–temp_high · Acción = fuera de action_low–action_high
+#  · Alerta = la zona intermedia, calculada automáticamente)
+# ===========================================================
+PRESETS_NEVERA = {
+    "Personalizado": None,
+    "Congelador (precongelados)": {
+        "temp_low": -30.0, "temp_high": -10.0,
+        "action_low": -30.0, "action_high": -5.0,
+    },
+    "Nevera de procesos (lácteos)": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
+    "Nevera 1 - Nivel 3 (carne de res)": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
+    "Nevera 1 - Nivel 2 (carne de cerdo)": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
+    "Nevera 1 - Nivel 1 (pollo y aves)": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
+    "Cuarto frío": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
+}
+
+def aplicar_preset():
+    """Callback: al cambiar el selector de equipo, sobreescribe los number_input."""
+    nombre = st.session_state.get("preset_equipo")
+    preset = PRESETS_NEVERA.get(nombre)
+    if preset:
+        st.session_state["temp_low_input"]    = preset["temp_low"]
+        st.session_state["temp_high_input"]   = preset["temp_high"]
+        st.session_state["action_low_input"]  = preset["action_low"]
+        st.session_state["action_high_input"] = preset["action_high"]
+
+
+# ===========================================================
 # SIDEBAR
 # ===========================================================
 with st.sidebar:
@@ -675,33 +700,39 @@ with st.sidebar:
         hum_low    = st.number_input("Humedad mínima (%)",      value=30.0, step=1.0)
         hum_high   = st.number_input("Humedad máxima (%)",      value=40.0, step=1.0)
         # Valores dummy para modo solo temp
-        alert_low = action_low = 0.0
-        alert_high = action_high = 100.0
+        action_low = 0.0
+        action_high = 100.0
     else:
+        st.markdown("**Preset de equipo**")
+        preset_choice = st.selectbox(
+            "Selecciona el equipo / producto",
+            list(PRESETS_NEVERA.keys()),
+            key="preset_equipo",
+            on_change=aplicar_preset,
+            help="Carga automáticamente los límites FAO / Innova Eats de ese equipo "
+                 "(según las tablas de control de Global Bild). Puedes ajustar los valores "
+                 "manualmente después si lo necesitas."
+        )
+
         st.markdown("**🟢 Rango seguro (Innova Eats)**")
-        temp_low  = st.number_input("Temp. mínima segura (°C)", value=2.0,  step=0.5)
-        temp_high = st.number_input("Temp. máxima segura (°C)", value=8.0,  step=0.5)
-        st.markdown("**🟡 Límites de alerta y seguimiento**")
-        alert_low  = st.number_input("Alerta inferior (°C)",  value=0.0,  step=0.5,
-                                      help="Menor a este valor → Alerta")
-        alert_high = st.number_input("Alerta superior (°C)", value=10.0, step=0.5,
-                                      help="Mayor a este valor → Alerta")
-        st.markdown("**🔴 Límites de acción**")
+        temp_low  = st.number_input("Temp. mínima segura (°C)", value=2.0,  step=0.5, key="temp_low_input")
+        temp_high = st.number_input("Temp. máxima segura (°C)", value=8.0,  step=0.5, key="temp_high_input")
+        st.markdown("**🔴 Límites de acción** (fuera de aquí = crítico)")
         action_low  = st.number_input("Acción inferior (°C)",  value=-2.0, step=0.5,
-                                       help="Menor a este valor → Acción inmediata")
+                                       help="Menor a este valor → Acción inmediata", key="action_low_input")
         action_high = st.number_input("Acción superior (°C)", value=10.0,  step=0.5,
-                                       help="Mayor a este valor → Acción inmediata")
+                                       help="Mayor a este valor → Acción inmediata", key="action_high_input")
         hum_low = hum_high = 0.0
 
-        # Leyenda visual
+        # Leyenda visual — Alerta se calcula automáticamente como la zona
+        # intermedia entre el rango Seguro y los límites de Acción.
         st.markdown("""
         <div style='font-size:12px; margin-top:8px;'>
         <span style='color:#27ae60'>●</span> Seguro: {tl}–{th} °C<br>
-        <span style='color:#e67e22'>●</span> Alerta: &lt;{al} °C | &gt;{ah} °C<br>
+        <span style='color:#e67e22'>●</span> Alerta: {acl}–{tl} °C  |  {th}–{ach} °C<br>
         <span style='color:#c0392b'>●</span> Acción: &lt;{acl} °C | &gt;{ach} °C
         </div>
         """.format(tl=temp_low, th=temp_high,
-                   al=alert_low, ah=alert_high,
                    acl=action_low, ach=action_high),
         unsafe_allow_html=True)
 
@@ -733,7 +764,7 @@ with st.sidebar:
     base_filename = clean_filename(base_filename_input) or default_name
     st.caption(f"Nombre actual: {base_filename}")
     st.markdown("---")
-    st.caption("v8 — Niveles FAO en modo Nevera.")
+    st.caption("v9 — Niveles FAO de 3 zonas reales + presets por equipo.")
 
 
 # ===========================================================
@@ -808,7 +839,7 @@ if tiene_humedad:
 
 else:
     processed_export = build_processed_export_solo_temp(
-        df_view, temp_low, temp_high, alert_low, alert_high, action_low, action_high)
+        df_view, temp_low, temp_high, action_low, action_high)
     delta_temp = (temp_stats["máximo"] - temp_stats["mínimo"]
                   if temp_stats["máximo"] is not None else None)
     temp_delta_ok = None if delta_temp is None else delta_temp <= 2
@@ -817,9 +848,7 @@ else:
 
     # Cumplimientos por nivel
     niveles_series = df_metrics["Temperatura"].apply(
-        lambda x: classify_nivel(x, temp_low, temp_high,
-                                  alert_low, alert_high,
-                                  action_low, action_high)
+        lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
     )
     total_valid = df_metrics["Temperatura"].notna().sum()
     n_seguro  = int((niveles_series == "Seguro").sum())
@@ -830,7 +859,7 @@ else:
     pct_accion  = n_accion_reg / total_valid * 100 if total_valid else 0
 
     events_alerta, events_accion = find_events_niveles(
-        df_view, temp_low, temp_high, alert_low, alert_high, action_low, action_high)
+        df_view, temp_low, temp_high, action_low, action_high)
 
 
 # ===========================================================
@@ -944,7 +973,7 @@ with tab1:
         st.plotly_chart(
             build_plotly_chart_niveles(
                 df_view, temp_low, temp_high,
-                alert_low, alert_high, action_low, action_high,
+                action_low, action_high,
                 show_markers=show_markers),
             use_container_width=True)
 
@@ -964,7 +993,7 @@ with tab1:
                 "Parámetro":["Seguro (Innova Eats)","Alerta","Acción"],
                 "Rango":[
                     f"{temp_low} – {temp_high} °C",
-                    f"< {alert_low} °C  |  {alert_high} – {action_high} °C",
+                    f"{action_low} – {temp_low} °C  |  {temp_high} – {action_high} °C",
                     f"< {action_low} °C  |  > {action_high} °C",
                 ]
             })
@@ -989,7 +1018,7 @@ with tab2:
         c1,c2 = st.columns(2)
         with c1:
             st.markdown("### 🟡 Eventos de ALERTA")
-            st.caption(f"Temperatura < {alert_low}°C  o  entre {temp_high} y {alert_high}°C")
+            st.caption(f"Temperatura entre {action_low}°C y {temp_low}°C, o entre {temp_high}°C y {action_high}°C")
             if events_alerta.empty:
                 st.success("No se detectaron eventos de alerta.")
             else:
@@ -1028,11 +1057,11 @@ with tab4:
     else:
         fig_temp_static = build_matplotlib_chart_niveles(
             df_view, temp_low, temp_high,
-            alert_low, alert_high, action_low, action_high)
+            action_low, action_high)
         pdf_bytes = generate_pdf_report_solo_temp(
             df_metrics, fig_temp_static,
             events_alerta, events_accion,
-            temp_low, temp_high, alert_low, alert_high, action_low, action_high,
+            temp_low, temp_high, action_low, action_high,
             temp_compliance, len(events_alerta), len(events_accion),
             delta_temp, temp_delta_ok)
         temp_png = fig_to_bytes(fig_temp_static)
