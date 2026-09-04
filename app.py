@@ -12,16 +12,16 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="SensorPush Pro v10",
+    page_title="Lab DataLogger Monitor v10",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("📊 SensorPush Pro v10")
+st.title("📊 Lab DataLogger Monitor v10")
 st.caption(
-    "Modo dual: SensorPush (temperatura + humedad) y Solo Temperatura (neveras, cámaras frías). "
-    "Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción, con presets por equipo. "
-    "Ahora con soporte para los dataloggers del laboratorio nuevo (ambiental T/RH y nevera multi-sonda)."
+    "Modo dual: Temperatura + Humedad (SensorPush o datalogger ambiental) y Solo Temperatura "
+    "(neveras, cámaras frías). Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción, "
+    "con presets por equipo. Con soporte para los dataloggers del laboratorio nuevo (ambiental T/RH y nevera multi-sonda)."
 )
 
 
@@ -352,6 +352,13 @@ def build_processed_export_solo_temp(df, temp_low, temp_high,
     )
     return out
 
+def build_processed_export_temp_simple(df, temp_low, temp_high):
+    """Modo rango simple (sin niveles FAO): solo dentro/fuera de rango."""
+    out = df.copy()
+    out["Estado_Temperatura"] = out["Temperatura"].apply(lambda x: classify_state(x, temp_low, temp_high))
+    out["Temperatura_Fuera_Rango"] = out_of_range_mask(out["Temperatura"], temp_low, temp_high)
+    return out
+
 def duration_out_of_range(df: pd.DataFrame, col: str, low: float, high: float):
     work = df[["Marca de Tiempo", col]].dropna().sort_values("Marca de Tiempo").copy()
     if len(work) < 2:
@@ -440,11 +447,11 @@ def find_events_niveles(df: pd.DataFrame, temp_low, temp_high, action_low, actio
 # VISUALIZACIÓN — SENSORPUSH (un solo rango)
 # ===========================================================
 def add_limit_band(fig, low, high):
-    fig.add_hrect(y0=low, y1=high, opacity=0.12, line_width=0,
+    fig.add_hrect(y0=low, y1=high, fillcolor="#2ecc71", opacity=0.15, line_width=0,
                   annotation_text="Rango aceptable", annotation_position="top left")
-    fig.add_hline(y=low, line_dash="dash",
+    fig.add_hline(y=low, line_dash="dash", line_color="#27ae60",
                   annotation_text=f"Límite inf.: {low}", annotation_position="bottom left")
-    fig.add_hline(y=high, line_dash="dash",
+    fig.add_hline(y=high, line_dash="dash", line_color="#27ae60",
                   annotation_text=f"Límite sup.: {high}", annotation_position="top left")
 
 def build_plotly_chart(df, y_col, title, y_label, low, high, show_markers=True):
@@ -661,7 +668,7 @@ def generate_pdf_report_sensorpush(df, fig_temp, fig_hum, events_df,
         hs = summarize_series(df["Humedad"])
         start, end = df["Marca de Tiempo"].min(), df["Marca de Tiempo"].max()
         lines = [
-            "REPORTE SENSORPUSH PRO V8",
+            "REPORTE LAB DATALOGGER MONITOR — TEMPERATURA Y HUMEDAD",
             f"Periodo: {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M}",
             f"Registros: {len(df)}",
             "",
@@ -700,14 +707,14 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
         ts = summarize_series(df["Temperatura"])
         start, end = df["Marca de Tiempo"].min(), df["Marca de Tiempo"].max()
         lines = [
-            "REPORTE SENSORPUSH PRO V9 — SOLO TEMPERATURA",
-            f"Referencia: Sistema de niveles FAO / Innova Eats",
+            "REPORTE LAB DATALOGGER MONITOR — SOLO TEMPERATURA",
+            f"Referencia: Sistema de niveles FAO",
             "",
             f"Periodo: {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M}",
             f"Registros: {len(df)}",
             "",
             "LÍMITES DE OPERACIÓN:",
-            f"  Parámetro seguro (Innova Eats): {temp_low} – {temp_high} °C",
+            f"  Parámetro seguro: {temp_low} – {temp_high} °C",
             f"  Alerta y seguimiento:           {action_low} – {temp_low} °C  |  {temp_high} – {action_high} °C",
             f"  Parámetro de acción:            < {action_low} °C  |  > {action_high} °C",
             "",
@@ -730,6 +737,41 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
     pdf_buffer.seek(0)
     return pdf_buffer.getvalue()
 
+
+def generate_pdf_report_temp_simple(df, fig_static, events_df,
+                                     temp_limits, temp_compliance,
+                                     delta_temp=None, temp_delta_ok=None):
+    """PDF para el modo rango simple (sin niveles FAO): solo dentro/fuera de rango."""
+    pdf_buffer = io.BytesIO()
+    with PdfPages(pdf_buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(11.69, 8.27)); ax.axis("off")
+        ts = summarize_series(df["Temperatura"])
+        start, end = df["Marca de Tiempo"].min(), df["Marca de Tiempo"].max()
+        lines = [
+            "REPORTE LAB DATALOGGER MONITOR — SOLO TEMPERATURA",
+            "",
+            f"Periodo: {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M}",
+            f"Registros: {len(df)}",
+            "",
+            f"Rango de control: {temp_limits[0]} – {temp_limits[1]} °C",
+            "",
+            "RESUMEN DE CUMPLIMIENTO:",
+            f"  Cumplimiento: {temp_compliance:.2f}%",
+            f"  Eventos fuera de rango: {len(events_df)}",
+            f"  Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "  Δ Temperatura: N/D",
+            "",
+            "ESTADÍSTICAS:",
+            f"  Mínimo:  {ts['mínimo']:.2f} °C" if ts["mínimo"] is not None else "  Sin datos",
+            f"  Máximo:  {ts['máximo']:.2f} °C" if ts["máximo"] is not None else "",
+            f"  Promedio:{ts['promedio']:.2f} °C" if ts["promedio"] is not None else "",
+        ]
+        ax.text(0.03, 0.97, "\n".join(lines), va="top", ha="left", fontsize=11, family="sans-serif")
+        pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+        pdf.savefig(fig_static, bbox_inches="tight")
+        _pdf_events_table(pdf, events_df, title="Eventos fuera de rango")
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
+
 def _pdf_events_table(pdf, events_df, title="Eventos fuera de rango"):
     if events_df is None or events_df.empty:
         return
@@ -746,69 +788,88 @@ def _pdf_events_table(pdf, events_df, title="Eventos fuera de rango"):
 
 
 # ===========================================================
-# PRESETS DE EQUIPOS — Límites FAO / Innova Eats
-# (Seguro = temp_low–temp_high · Acción = fuera de action_low–action_high
-#  · Alerta = la zona intermedia, calculada automáticamente)
+# PRESETS DE EQUIPOS
+# tipo "fao"    → Seguro = temp_low–temp_high · Acción = fuera de
+#                  action_low–action_high · Alerta = zona intermedia
+# tipo "simple" → un solo rango de control (dentro/fuera), sin
+#                  zona de alerta ni de acción
 # ===========================================================
 PRESETS_NEVERA = {
     "Personalizado": None,
     "Congelador (precongelados)": {
+        "tipo": "fao",
         "temp_low": -30.0, "temp_high": -10.0,
         "action_low": -30.0, "action_high": -5.0,
     },
     "Nevera de procesos (lácteos)": {
+        "tipo": "fao",
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
     "Nevera 1 - Nivel 3 (carne de res)": {
+        "tipo": "fao",
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
     "Nevera 1 - Nivel 2 (carne de cerdo)": {
+        "tipo": "fao",
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
     "Nevera 1 - Nivel 1 (pollo y aves)": {
+        "tipo": "fao",
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
     "Cuarto frío": {
+        "tipo": "fao",
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
     "Laboratorio BD&BE (nevera 2-8°C)": {
+        "tipo": "simple",
         "temp_low": 2.0, "temp_high": 8.0,
-        "action_low": -2.0, "action_high": 10.0,
     },
 }
 
 def aplicar_preset():
-    """Callback: al cambiar el selector de equipo, sobreescribe los number_input."""
+    """Callback: al cambiar el selector de equipo, sobreescribe los number_input
+    y activa/desactiva el sistema de niveles FAO según el tipo del preset."""
     nombre = st.session_state.get("preset_equipo")
     preset = PRESETS_NEVERA.get(nombre)
-    if preset:
-        st.session_state["temp_low_input"]    = preset["temp_low"]
-        st.session_state["temp_high_input"]   = preset["temp_high"]
+    if not preset:
+        return
+    st.session_state["temp_low_input"]  = preset["temp_low"]
+    st.session_state["temp_high_input"] = preset["temp_high"]
+    if preset.get("tipo") == "simple":
+        st.session_state["usar_fao_input"] = False
+        # sin zona de alerta/acción: los límites de acción quedan igual al rango seguro
+        st.session_state["action_low_input"]  = preset["temp_low"]
+        st.session_state["action_high_input"] = preset["temp_high"]
+    else:
+        st.session_state["usar_fao_input"] = True
         st.session_state["action_low_input"]  = preset["action_low"]
         st.session_state["action_high_input"] = preset["action_high"]
 
 
 # ===========================================================
 # PRESETS AMBIENTALES (modo Temperatura + Humedad)
-# Límites de control de temperatura por laboratorio/ambiente.
+# Límites de control de temperatura y humedad por laboratorio/ambiente.
 # ===========================================================
 PRESETS_AMBIENTAL = {
     "Personalizado": None,
-    "Laboratorio BD&BE": {"temp_low": 17.0, "temp_high": 23.0},
+    "Laboratorio BD&BE": {"temp_low": 17.0, "temp_high": 23.0, "hum_low": 30.0, "hum_high": 70.0},
 }
 
 def aplicar_preset_ambiental():
-    """Callback: al cambiar el selector de ambiente, sobreescribe los number_input de temperatura."""
+    """Callback: al cambiar el selector de ambiente, sobreescribe los number_input de temperatura y humedad."""
     nombre = st.session_state.get("preset_ambiental")
     preset = PRESETS_AMBIENTAL.get(nombre)
     if preset:
-        st.session_state["temp_low_input_amb"]  = preset["temp_low"]
+        st.session_state["temp_low_input_amb"] = preset["temp_low"]
         st.session_state["temp_high_input_amb"] = preset["temp_high"]
+        st.session_state["hum_low_input_amb"]  = preset["hum_low"]
+        st.session_state["hum_high_input_amb"] = preset["hum_high"]
 
 
 # ===========================================================
@@ -820,15 +881,16 @@ with st.sidebar:
     st.subheader("Tipo de archivo")
     modo = st.radio(
         "Selecciona el formato de los datos:",
-        ["SensorPush (Temp + Humedad)", "Solo Temperatura (Nevera / Cámara fría)"],
+        ["Temperatura + Humedad", "Solo Temperatura (Nevera / Cámara fría)"],
         index=0,
         help=(
-            "SensorPush: CSV/Excel/ZIP con columnas Marca de Tiempo, Temperatura, Humedad.\n\n"
-            "Solo Temperatura: CSV separador ';', sin encabezados, decimal coma. "
-            "Columnas: índice | fecha | hora | temperatura."
+            "Temperatura + Humedad: SensorPush (CSV/Excel/ZIP) o datalogger ambiental "
+            "del laboratorio nuevo (Test Report).\n\n"
+            "Solo Temperatura: nevera clásica (CSV ';' decimal coma) o nevera multi-sonda "
+            "del laboratorio nuevo (TXT)."
         )
     )
-    tiene_humedad = modo == "SensorPush (Temp + Humedad)"
+    tiene_humedad = modo == "Temperatura + Humedad"
 
     st.subheader("Formato del archivo")
     if tiene_humedad:
@@ -873,16 +935,17 @@ with st.sidebar:
             list(PRESETS_AMBIENTAL.keys()),
             key="preset_ambiental",
             on_change=aplicar_preset_ambiental,
-            help="Carga automáticamente los límites de control de temperatura de ese ambiente. "
+            help="Carga automáticamente los límites de control de temperatura y humedad de ese ambiente. "
                  "Puedes ajustar los valores manualmente después si lo necesitas."
         )
         temp_low   = st.number_input("Temperatura mínima (°C)", value=20.0, step=0.5, key="temp_low_input_amb")
         temp_high  = st.number_input("Temperatura máxima (°C)", value=23.0, step=0.5, key="temp_high_input_amb")
-        hum_low    = st.number_input("Humedad mínima (%)",      value=30.0, step=1.0)
-        hum_high   = st.number_input("Humedad máxima (%)",      value=40.0, step=1.0)
+        hum_low    = st.number_input("Humedad mínima (%)",      value=30.0, step=1.0, key="hum_low_input_amb")
+        hum_high   = st.number_input("Humedad máxima (%)",      value=40.0, step=1.0, key="hum_high_input_amb")
         # Valores dummy para modo solo temp
         action_low = 0.0
         action_high = 100.0
+        usar_fao = False
     else:
         st.markdown("**Preset de equipo**")
         preset_choice = st.selectbox(
@@ -890,32 +953,48 @@ with st.sidebar:
             list(PRESETS_NEVERA.keys()),
             key="preset_equipo",
             on_change=aplicar_preset,
-            help="Carga automáticamente los límites FAO / Innova Eats de ese equipo "
-                 "(según las tablas de control de Global Bild). Puedes ajustar los valores "
-                 "manualmente después si lo necesitas."
+            help="Carga automáticamente los límites de control de ese equipo. "
+                 "Puedes ajustar los valores manualmente después si lo necesitas."
         )
 
-        st.markdown("**🟢 Rango seguro (Innova Eats)**")
-        temp_low  = st.number_input("Temp. mínima segura (°C)", value=2.0,  step=0.5, key="temp_low_input")
-        temp_high = st.number_input("Temp. máxima segura (°C)", value=8.0,  step=0.5, key="temp_high_input")
-        st.markdown("**🔴 Límites de acción** (fuera de aquí = crítico)")
-        action_low  = st.number_input("Acción inferior (°C)",  value=-2.0, step=0.5,
-                                       help="Menor a este valor → Acción inmediata", key="action_low_input")
-        action_high = st.number_input("Acción superior (°C)", value=10.0,  step=0.5,
-                                       help="Mayor a este valor → Acción inmediata", key="action_high_input")
+        usar_fao = st.checkbox(
+            "Usar sistema de 3 niveles FAO (Seguro / Alerta / Acción)",
+            value=True,
+            key="usar_fao_input",
+            help="Desactívalo para usar solo un rango de control simple (dentro/fuera de rango), "
+                 "sin zona de alerta ni de acción."
+        )
         hum_low = hum_high = 0.0
 
-        # Leyenda visual — Alerta se calcula automáticamente como la zona
-        # intermedia entre el rango Seguro y los límites de Acción.
-        st.markdown("""
-        <div style='font-size:12px; margin-top:8px;'>
-        <span style='color:#27ae60'>●</span> Seguro: {tl}–{th} °C<br>
-        <span style='color:#e67e22'>●</span> Alerta: {acl}–{tl} °C  |  {th}–{ach} °C<br>
-        <span style='color:#c0392b'>●</span> Acción: &lt;{acl} °C | &gt;{ach} °C
-        </div>
-        """.format(tl=temp_low, th=temp_high,
-                   acl=action_low, ach=action_high),
-        unsafe_allow_html=True)
+        if usar_fao:
+            st.markdown("**🟢 Rango seguro**")
+            temp_low  = st.number_input("Temp. mínima segura (°C)", value=2.0,  step=0.5, key="temp_low_input")
+            temp_high = st.number_input("Temp. máxima segura (°C)", value=8.0,  step=0.5, key="temp_high_input")
+            st.markdown("**🔴 Límites de acción** (fuera de aquí = crítico)")
+            action_low  = st.number_input("Acción inferior (°C)",  value=-2.0, step=0.5,
+                                           help="Menor a este valor → Acción inmediata", key="action_low_input")
+            action_high = st.number_input("Acción superior (°C)", value=10.0,  step=0.5,
+                                           help="Mayor a este valor → Acción inmediata", key="action_high_input")
+
+            # Leyenda visual — Alerta se calcula automáticamente como la zona
+            # intermedia entre el rango Seguro y los límites de Acción.
+            st.markdown("""
+            <div style='font-size:12px; margin-top:8px;'>
+            <span style='color:#27ae60'>●</span> Seguro: {tl}–{th} °C<br>
+            <span style='color:#e67e22'>●</span> Alerta: {acl}–{tl} °C  |  {th}–{ach} °C<br>
+            <span style='color:#c0392b'>●</span> Acción: &lt;{acl} °C | &gt;{ach} °C
+            </div>
+            """.format(tl=temp_low, th=temp_high,
+                       acl=action_low, ach=action_high),
+            unsafe_allow_html=True)
+        else:
+            st.markdown("**Rango de control**")
+            temp_low  = st.number_input("Temp. mínima (°C)", value=2.0, step=0.5, key="temp_low_input")
+            temp_high = st.number_input("Temp. máxima (°C)", value=8.0, step=0.5, key="temp_high_input")
+            action_low  = temp_low   # no se usan zonas de acción en este modo
+            action_high = temp_high
+            st.caption(f"Rango de control: {temp_low}–{temp_high} °C. "
+                       f"Fuera de este rango se marca como fuera de control.")
 
     # ---- Agrupación ----
     st.subheader("Agrupación de datos")
@@ -939,7 +1018,13 @@ with st.sidebar:
 
     # ---- Nombre de archivos ----
     st.subheader("Nombre de archivos")
-    default_name = "sensorpush_reporte" if tiene_humedad else "nevera_reporte"
+    default_names = {
+        "SensorPush (CSV/Excel/ZIP)": "sensorpush_reporte",
+        "Datalogger ambiental — Lab nuevo (Test Report)": "ambiental_labnuevo_reporte",
+        "Nevera clásica (CSV ; decimal coma)": "nevera_reporte",
+        "Nevera — Lab nuevo (TXT multi-sonda)": "nevera_labnuevo_reporte",
+    }
+    default_name = default_names.get(formato, "reporte")
     base_filename_input = st.text_input("Nombre base", value=default_name,
                                          help="Ej: monitoreo_nevera_mayo_2026")
     base_filename = clean_filename(base_filename_input) or default_name
@@ -1037,28 +1122,34 @@ if tiene_humedad:
                     if not events_temp.empty or not events_hum.empty else pd.DataFrame())
 
 else:
-    processed_export = build_processed_export_solo_temp(
-        df_view, temp_low, temp_high, action_low, action_high)
     delta_temp = (temp_stats["máximo"] - temp_stats["mínimo"]
                   if temp_stats["máximo"] is not None else None)
     temp_delta_ok = None if delta_temp is None else delta_temp <= 2
     temp_out = duration_out_of_range(df_metrics, "Temperatura", temp_low, temp_high)
     temp_compliance = compute_compliance(df_metrics["Temperatura"], temp_low, temp_high)
 
-    # Cumplimientos por nivel
-    niveles_series = df_metrics["Temperatura"].apply(
-        lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
-    )
-    total_valid = df_metrics["Temperatura"].notna().sum()
-    n_seguro  = int((niveles_series == "Seguro").sum())
-    n_alerta_reg = int((niveles_series == "Alerta").sum())
-    n_accion_reg = int((niveles_series == "Acción").sum())
-    pct_seguro  = n_seguro  / total_valid * 100 if total_valid else 0
-    pct_alerta  = n_alerta_reg / total_valid * 100 if total_valid else 0
-    pct_accion  = n_accion_reg / total_valid * 100 if total_valid else 0
+    if usar_fao:
+        processed_export = build_processed_export_solo_temp(
+            df_view, temp_low, temp_high, action_low, action_high)
 
-    events_alerta, events_accion = find_events_niveles(
-        df_view, temp_low, temp_high, action_low, action_high)
+        # Cumplimientos por nivel
+        niveles_series = df_metrics["Temperatura"].apply(
+            lambda x: classify_nivel(x, temp_low, temp_high, action_low, action_high)
+        )
+        total_valid = df_metrics["Temperatura"].notna().sum()
+        n_seguro  = int((niveles_series == "Seguro").sum())
+        n_alerta_reg = int((niveles_series == "Alerta").sum())
+        n_accion_reg = int((niveles_series == "Acción").sum())
+        pct_seguro  = n_seguro  / total_valid * 100 if total_valid else 0
+        pct_alerta  = n_alerta_reg / total_valid * 100 if total_valid else 0
+        pct_accion  = n_accion_reg / total_valid * 100 if total_valid else 0
+
+        events_alerta, events_accion = find_events_niveles(
+            df_view, temp_low, temp_high, action_low, action_high)
+    else:
+        processed_export = build_processed_export_temp_simple(
+            df_view, temp_low, temp_high)
+        events_simple = find_events(df_view, "Temperatura", temp_low, temp_high, "Temperatura")
 
 
 # ===========================================================
@@ -1090,43 +1181,68 @@ if tiene_humedad:
     alertas = []
     if temp_delta_ok is False: alertas.append("Δ Temperatura supera criterio (≤2°C).")
     if hum_delta_ok  is False: alertas.append("Δ HR supera criterio (≤5%).")
-    st.warning(" ".join(alertas)) if alertas else st.success("Criterios de Δ cumplidos.")
+    if alertas:
+        st.warning(" ".join(alertas))
+    else:
+        st.success("Criterios de Δ cumplidos.")
 
 else:
-    # ---- KPIs modo Solo Temperatura con 3 niveles ----
-    r1,r2,r3,r4 = st.columns(4)
-    r1.metric("Registros analizados", f"{len(df_metrics):,}".replace(",","."))
-    r2.metric("🟢 En rango seguro",   f"{pct_seguro:.2f}%",
-              delta=f"{n_seguro} registros")
-    r3.metric("🟡 En alerta",         f"{pct_alerta:.2f}%",
-              delta=f"{n_alerta_reg} registros",
-              delta_color="inverse" if n_alerta_reg > 0 else "off")
-    r4.metric("🔴 En acción",         f"{pct_accion:.2f}%",
-              delta=f"{n_accion_reg} registros",
-              delta_color="inverse" if n_accion_reg > 0 else "off")
+    if usar_fao:
+        # ---- KPIs modo Solo Temperatura con 3 niveles ----
+        r1,r2,r3,r4 = st.columns(4)
+        r1.metric("Registros analizados", f"{len(df_metrics):,}".replace(",","."))
+        r2.metric("🟢 En rango seguro",   f"{pct_seguro:.2f}%",
+                  delta=f"{n_seguro} registros")
+        r3.metric("🟡 En alerta",         f"{pct_alerta:.2f}%",
+                  delta=f"{n_alerta_reg} registros",
+                  delta_color="inverse" if n_alerta_reg > 0 else "off")
+        r4.metric("🔴 En acción",         f"{pct_accion:.2f}%",
+                  delta=f"{n_accion_reg} registros",
+                  delta_color="inverse" if n_accion_reg > 0 else "off")
 
-    r5,r6,r7,r8 = st.columns(4)
-    r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
-    r6.metric("Mín. temperatura",  f"{temp_stats['mínimo']:.2f} °C"  if temp_stats["mínimo"]   is not None else "N/D")
-    r7.metric("Máx. temperatura",  f"{temp_stats['máximo']:.2f} °C"  if temp_stats["máximo"]   is not None else "N/D")
-    r8.metric("Δ Temperatura",     f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
-              delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
+        r5,r6,r7,r8 = st.columns(4)
+        r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
+        r6.metric("Mín. temperatura",  f"{temp_stats['mínimo']:.2f} °C"  if temp_stats["mínimo"]   is not None else "N/D")
+        r7.metric("Máx. temperatura",  f"{temp_stats['máximo']:.2f} °C"  if temp_stats["máximo"]   is not None else "N/D")
+        r8.metric("Δ Temperatura",     f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+                  delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
 
-    r9,r10,r11,r12 = st.columns(4)
-    r9.metric("Eventos de alerta",   f"{len(events_alerta)}")
-    r10.metric("Eventos de acción",  f"{len(events_accion)}")
-    r11.metric("Min. estimados alerta", f"{round(n_alerta_reg * (compute_sampling_minutes(df_metrics) or 0), 1)}")
-    r12.metric("Min. estimados acción", f"{round(n_accion_reg  * (compute_sampling_minutes(df_metrics) or 0), 1)}")
+        r9,r10,r11,r12 = st.columns(4)
+        r9.metric("Eventos de alerta",   f"{len(events_alerta)}")
+        r10.metric("Eventos de acción",  f"{len(events_accion)}")
+        r11.metric("Min. estimados alerta", f"{round(n_alerta_reg * (compute_sampling_minutes(df_metrics) or 0), 1)}")
+        r12.metric("Min. estimados acción", f"{round(n_accion_reg  * (compute_sampling_minutes(df_metrics) or 0), 1)}")
 
-    st.progress(min(pct_seguro/100, 1.0),
-                text=f"Registros en rango seguro: {pct_seguro:.2f}%")
+        st.progress(min(pct_seguro/100, 1.0),
+                    text=f"Registros en rango seguro: {pct_seguro:.2f}%")
 
-    if n_accion_reg > 0:
-        st.error(f"⚠️ Se detectaron {n_accion_reg} registros en zona de ACCIÓN. Revisión inmediata recomendada.")
-    elif n_alerta_reg > 0:
-        st.warning(f"Se detectaron {n_alerta_reg} registros en zona de ALERTA. Verificar cadena de frío.")
+        if n_accion_reg > 0:
+            st.error(f"⚠️ Se detectaron {n_accion_reg} registros en zona de ACCIÓN. Revisión inmediata recomendada.")
+        elif n_alerta_reg > 0:
+            st.warning(f"Se detectaron {n_alerta_reg} registros en zona de ALERTA. Verificar cadena de frío.")
+        else:
+            st.success("Todos los registros se encuentran en el rango seguro.")
     else:
-        st.success("Todos los registros se encuentran en el rango seguro.")
+        # ---- KPIs modo Solo Temperatura con rango simple (sin niveles FAO) ----
+        r1,r2,r3,r4 = st.columns(4)
+        r1.metric("Registros analizados", f"{len(df_metrics):,}".replace(",","."))
+        r2.metric("Cumplimiento",         f"{temp_compliance:.2f}%")
+        r3.metric("Eventos fuera de rango", f"{len(events_simple)}")
+        r4.metric("Δ Temperatura",        f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+                  delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
+
+        r5,r6,r7 = st.columns(3)
+        r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
+        r6.metric("Mín. temperatura",  f"{temp_stats['mínimo']:.2f} °C"  if temp_stats["mínimo"]   is not None else "N/D")
+        r7.metric("Máx. temperatura",  f"{temp_stats['máximo']:.2f} °C"  if temp_stats["máximo"]   is not None else "N/D")
+
+        st.progress(min(temp_compliance/100, 1.0),
+                    text=f"Registros dentro de rango: {temp_compliance:.2f}%")
+
+        if temp_out["registros"] > 0:
+            st.warning(f"Se detectaron {temp_out['registros']} registros fuera del rango de control.")
+        else:
+            st.success("Todos los registros se encuentran dentro del rango de control.")
 
 st.markdown("---")
 
@@ -1166,37 +1282,54 @@ with tab1:
             if hum_compliance<100:  msgs.append(f"HR fuera de criterio en {hum_out['registros']} registros.")
             if temp_delta_ok is False: msgs.append("Δ Temperatura no cumple.")
             if hum_delta_ok  is False: msgs.append("Δ HR no cumple.")
-            st.warning(" ".join(msgs)) if msgs else st.success("Todas las mediciones cumplen los límites.")
+            if msgs:
+                st.warning(" ".join(msgs))
+            else:
+                st.success("Todas las mediciones cumplen los límites.")
     else:
-        # Gráfica de 3 niveles
-        st.plotly_chart(
-            build_plotly_chart_niveles(
-                df_view, temp_low, temp_high,
-                action_low, action_high,
-                show_markers=show_markers),
-            use_container_width=True)
+        if usar_fao:
+            # Gráfica de 3 niveles
+            st.plotly_chart(
+                build_plotly_chart_niveles(
+                    df_view, temp_low, temp_high,
+                    action_low, action_high,
+                    show_markers=show_markers),
+                use_container_width=True)
 
-        # Tabla de cumplimiento por nivel
-        st.markdown("**Distribución por nivel**")
-        c1,c2 = st.columns(2)
-        with c1:
-            nivel_df = pd.DataFrame({
-                "Nivel":    ["🟢 Seguro","🟡 Alerta","🔴 Acción"],
-                "Registros":[n_seguro, n_alerta_reg, n_accion_reg],
-                "% del total":[round(pct_seguro,2), round(pct_alerta,2), round(pct_accion,2)],
-            })
-            st.dataframe(nivel_df, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown("**Referencia de límites**")
-            ref_df = pd.DataFrame({
-                "Parámetro":["Seguro (Innova Eats)","Alerta","Acción"],
-                "Rango":[
-                    f"{temp_low} – {temp_high} °C",
-                    f"{action_low} – {temp_low} °C  |  {temp_high} – {action_high} °C",
-                    f"< {action_low} °C  |  > {action_high} °C",
-                ]
-            })
-            st.dataframe(ref_df, use_container_width=True, hide_index=True)
+            # Tabla de cumplimiento por nivel
+            st.markdown("**Distribución por nivel**")
+            c1,c2 = st.columns(2)
+            with c1:
+                nivel_df = pd.DataFrame({
+                    "Nivel":    ["🟢 Seguro","🟡 Alerta","🔴 Acción"],
+                    "Registros":[n_seguro, n_alerta_reg, n_accion_reg],
+                    "% del total":[round(pct_seguro,2), round(pct_alerta,2), round(pct_accion,2)],
+                })
+                st.dataframe(nivel_df, use_container_width=True, hide_index=True)
+            with c2:
+                st.markdown("**Referencia de límites**")
+                ref_df = pd.DataFrame({
+                    "Parámetro":["Seguro","Alerta","Acción"],
+                    "Rango":[
+                        f"{temp_low} – {temp_high} °C",
+                        f"{action_low} – {temp_low} °C  |  {temp_high} – {action_high} °C",
+                        f"< {action_low} °C  |  > {action_high} °C",
+                    ]
+                })
+                st.dataframe(ref_df, use_container_width=True, hide_index=True)
+        else:
+            # Gráfica de rango simple (sin niveles FAO)
+            st.plotly_chart(
+                build_plotly_chart(
+                    df_view, "Temperatura", "Temperatura a lo largo del tiempo",
+                    "Temperatura (°C)", temp_low, temp_high, show_markers=show_markers),
+                use_container_width=True)
+
+            st.markdown("**Cumplimiento**")
+            st.dataframe(pd.DataFrame({
+                "Variable": ["Temperatura"],
+                "Cumplimiento (%)": [round(temp_compliance, 2)],
+            }), use_container_width=True, hide_index=True)
 
 # ---- TAB 2: Eventos ----
 with tab2:
@@ -1214,21 +1347,29 @@ with tab2:
         if events_df.empty: st.info("No hay eventos.")
         else: st.dataframe(events_df, use_container_width=True)
     else:
-        c1,c2 = st.columns(2)
-        with c1:
-            st.markdown("### 🟡 Eventos de ALERTA")
-            st.caption(f"Temperatura entre {action_low}°C y {temp_low}°C, o entre {temp_high}°C y {action_high}°C")
-            if events_alerta.empty:
-                st.success("No se detectaron eventos de alerta.")
+        if usar_fao:
+            c1,c2 = st.columns(2)
+            with c1:
+                st.markdown("### 🟡 Eventos de ALERTA")
+                st.caption(f"Temperatura entre {action_low}°C y {temp_low}°C, o entre {temp_high}°C y {action_high}°C")
+                if events_alerta.empty:
+                    st.success("No se detectaron eventos de alerta.")
+                else:
+                    st.dataframe(events_alerta, use_container_width=True)
+            with c2:
+                st.markdown("### 🔴 Eventos de ACCIÓN")
+                st.caption(f"Temperatura < {action_low}°C  o  > {action_high}°C")
+                if events_accion.empty:
+                    st.success("No se detectaron eventos de acción.")
+                else:
+                    st.dataframe(events_accion, use_container_width=True)
+        else:
+            st.markdown("### Eventos fuera de rango")
+            st.caption(f"Temperatura < {temp_low}°C  o  > {temp_high}°C")
+            if events_simple.empty:
+                st.success("No se detectaron eventos fuera de rango.")
             else:
-                st.dataframe(events_alerta, use_container_width=True)
-        with c2:
-            st.markdown("### 🔴 Eventos de ACCIÓN")
-            st.caption(f"Temperatura < {action_low}°C  o  > {action_high}°C")
-            if events_accion.empty:
-                st.success("No se detectaron eventos de acción.")
-            else:
-                st.dataframe(events_accion, use_container_width=True)
+                st.dataframe(events_simple, use_container_width=True)
 
 # ---- TAB 3: Datos ----
 with tab3:
@@ -1254,15 +1395,24 @@ with tab4:
         temp_png = fig_to_bytes(fig_temp_static)
         hum_png  = fig_to_bytes(fig_hum_static)
     else:
-        fig_temp_static = build_matplotlib_chart_niveles(
-            df_view, temp_low, temp_high,
-            action_low, action_high)
-        pdf_bytes = generate_pdf_report_solo_temp(
-            df_metrics, fig_temp_static,
-            events_alerta, events_accion,
-            temp_low, temp_high, action_low, action_high,
-            temp_compliance, len(events_alerta), len(events_accion),
-            delta_temp, temp_delta_ok)
+        if usar_fao:
+            fig_temp_static = build_matplotlib_chart_niveles(
+                df_view, temp_low, temp_high,
+                action_low, action_high)
+            pdf_bytes = generate_pdf_report_solo_temp(
+                df_metrics, fig_temp_static,
+                events_alerta, events_accion,
+                temp_low, temp_high, action_low, action_high,
+                temp_compliance, len(events_alerta), len(events_accion),
+                delta_temp, temp_delta_ok)
+        else:
+            fig_temp_static = build_matplotlib_chart(
+                df_view, "Temperatura", "Temperatura", "Temperatura (°C)",
+                temp_low, temp_high)
+            pdf_bytes = generate_pdf_report_temp_simple(
+                df_metrics, fig_temp_static, events_simple,
+                (temp_low, temp_high), temp_compliance,
+                delta_temp, temp_delta_ok)
         temp_png = fig_to_bytes(fig_temp_static)
         hum_png  = None
 
@@ -1295,7 +1445,7 @@ with tab5:
     sampling = compute_sampling_minutes(df)
     st.markdown("**Diagnóstico del archivo**")
     diag = {
-        "Modo": "SensorPush" if tiene_humedad else "Solo Temperatura",
+        "Modo": "Temperatura + Humedad" if tiene_humedad else "Solo Temperatura",
         "Formato de origen": formato,
         "Registros originales": len(df_raw),
         "Registros válidos en periodo": len(df),
@@ -1308,13 +1458,20 @@ with tab5:
         "Cumple Δ Temperatura (≤2°C)": temp_delta_ok,
     }
     if not tiene_humedad:
-        diag.update({
-            "% registros Seguro":  round(pct_seguro, 2),
-            "% registros Alerta":  round(pct_alerta, 2),
-            "% registros Acción":  round(pct_accion, 2),
-            "Eventos de alerta":   len(events_alerta),
-            "Eventos de acción":   len(events_accion),
-        })
+        diag["Sistema de niveles FAO"] = "Sí" if usar_fao else "No (rango simple)"
+        if usar_fao:
+            diag.update({
+                "% registros Seguro":  round(pct_seguro, 2),
+                "% registros Alerta":  round(pct_alerta, 2),
+                "% registros Acción":  round(pct_accion, 2),
+                "Eventos de alerta":   len(events_alerta),
+                "Eventos de acción":   len(events_accion),
+            })
+        else:
+            diag.update({
+                "% dentro de rango de control": round(temp_compliance, 2),
+                "Eventos fuera de rango": len(events_simple),
+            })
     else:
         diag.update({
             "% HR fuera de rango": round(hum_out["porcentaje_registros"],2),
