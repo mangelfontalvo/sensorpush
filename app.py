@@ -12,15 +12,16 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="SensorPush Pro v9",
+    page_title="SensorPush Pro v10",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("📊 SensorPush Pro v9")
+st.title("📊 SensorPush Pro v10")
 st.caption(
     "Modo dual: SensorPush (temperatura + humedad) y Solo Temperatura (neveras, cámaras frías). "
-    "Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción, con presets por equipo."
+    "Modo nevera incluye sistema de 3 niveles FAO: Seguro / Alerta / Acción, con presets por equipo. "
+    "Ahora con soporte para los dataloggers del laboratorio nuevo (ambiental T/RH y nevera multi-sonda)."
 )
 
 
@@ -109,6 +110,65 @@ def prepare_dataframe_sensorpush(df_raw: pd.DataFrame):
 
 
 # ===========================================================
+# CARGA — DATALOGGER AMBIENTAL, LABORATORIO NUEVO
+# Formato "Test Report": cabecera de metadatos (Start/End Time,
+# Sampling rate, alarmas HI/LO, MAX/MIN/AVG), luego una línea
+# separadora "----" y una tabla NO / Temp / RH / TIME.
+# Ojo: suele llegar con extensión .xls aunque el contenido es
+# texto plano tabulado, por eso se lee siempre como texto.
+# ===========================================================
+def load_data_ambiental_labnuevo(uploaded_file):
+    uploaded_file.seek(0)
+    raw = uploaded_file.read()
+    text = None
+    for enc in ["utf-8-sig", "utf-8", "latin1"]:
+        try:
+            text = raw.decode(enc)
+            break
+        except Exception:
+            continue
+    if text is None:
+        raise ValueError("No fue posible decodificar el archivo del datalogger ambiental.")
+
+    lines = text.splitlines()
+    try:
+        sep_idx = next(i for i, l in enumerate(lines) if l.strip().startswith("----"))
+    except StopIteration:
+        raise ValueError(
+            "No se reconoce el formato 'Test Report' del datalogger ambiental "
+            "(no se encontró la línea separadora '----' antes de la tabla de datos)."
+        )
+    # se salta la línea separadora y la de encabezados "NO / Temp / RH / TIME"
+    data_lines = lines[sep_idx + 2:]
+
+    records = []
+    for line in data_lines:
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split("\t") if p.strip() != ""]
+        if len(parts) < 4:
+            continue
+        try:
+            temp_val = float(parts[1].replace("C", "").strip())
+            rh_val = float(parts[2].replace("%RH", "").strip())
+            ts = pd.to_datetime(parts[3], format="%d-%m-%y/%H:%M:%S", errors="coerce")
+        except Exception:
+            continue
+        if pd.isna(ts):
+            continue
+        records.append((ts, temp_val, rh_val))
+
+    if not records:
+        raise ValueError(
+            "No se encontraron registros válidos. Verifica que el archivo sea un "
+            "'Test Report' del datalogger ambiental del laboratorio nuevo."
+        )
+
+    df = pd.DataFrame(records, columns=["Marca de Tiempo", "Temperatura", "Humedad"])
+    return df.dropna(subset=["Marca de Tiempo"]).sort_values("Marca de Tiempo").reset_index(drop=True)
+
+
+# ===========================================================
 # CARGA — MODO SOLO TEMPERATURA (formato nevera)
 # índice;fecha;hora;temperatura — sin encabezados, decimal coma
 # ===========================================================
@@ -140,6 +200,68 @@ def load_data_solo_temp(uploaded_file):
     df["Temperatura"] = pd.to_numeric(df["Temperatura"], errors="coerce")
     df = df[["Marca de Tiempo", "Temperatura"]].dropna(subset=["Marca de Tiempo"])
     return df.sort_values("Marca de Tiempo").reset_index(drop=True)
+
+
+# ===========================================================
+# CARGA — NEVERA / REFRIGERADOR, LABORATORIO NUEVO
+# Formato multi-sonda tabulado (3 líneas de encabezado):
+# Marker | Time | Timestamp | T cham | A1..A6 | M Def | A Def |
+# T1 | T2 | T3 | Compr.1 | Compr.2 | Room temp | Evap temp |
+# door | door time
+# Se usa "T cham" (temperatura de cámara) como variable principal
+# de clasificación, y "Room temp" (temperatura ambiente junto al
+# equipo) se conserva como columna de referencia.
+# ===========================================================
+def load_data_nevera_labnuevo(uploaded_file):
+    uploaded_file.seek(0)
+    raw = uploaded_file.read()
+    text = None
+    for enc in ["utf-8-sig", "utf-8", "latin1"]:
+        try:
+            text = raw.decode(enc)
+            break
+        except Exception:
+            continue
+    if text is None:
+        raise ValueError("No fue posible decodificar el archivo de la nevera.")
+
+    lines = text.splitlines()
+    if len(lines) < 4 or not lines[0].strip().lower().startswith("logging data"):
+        raise ValueError(
+            "No se reconoce el formato del datalogger de nevera del laboratorio nuevo "
+            "(se esperaba una primera línea tipo 'Logging data ...')."
+        )
+    data_lines = lines[3:]  # después de las 3 líneas de encabezado
+
+    records = []
+    for line in data_lines:
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 18:
+            continue
+        try:
+            fecha, hora = [p.strip() for p in parts[2].strip().split(",")]
+            fecha = fecha.replace(".", "-")
+            hora = hora.replace(".", ":", 1)  # solo el separador de segundos
+            ts = pd.to_datetime(f"{fecha} {hora}", format="%Y-%m-%d %H:%M:%S", errors="coerce")
+            t_cham = float(parts[3].strip())
+            room_raw = parts[17].strip()
+            room_temp = float(room_raw) if room_raw != "" else None
+        except Exception:
+            continue
+        if pd.isna(ts):
+            continue
+        records.append((ts, t_cham, room_temp))
+
+    if not records:
+        raise ValueError(
+            "No se encontraron registros válidos. Verifica que el archivo sea un "
+            "log del datalogger de nevera del laboratorio nuevo."
+        )
+
+    df = pd.DataFrame(records, columns=["Marca de Tiempo", "Temperatura", "Room_Temp"])
+    return df.dropna(subset=["Marca de Tiempo"]).sort_values("Marca de Tiempo").reset_index(drop=True)
 
 
 # ===========================================================
@@ -654,6 +776,10 @@ PRESETS_NEVERA = {
         "temp_low": 2.0, "temp_high": 8.0,
         "action_low": -2.0, "action_high": 10.0,
     },
+    "Laboratorio BD&BE (nevera 2-8°C)": {
+        "temp_low": 2.0, "temp_high": 8.0,
+        "action_low": -2.0, "action_high": 10.0,
+    },
 }
 
 def aplicar_preset():
@@ -665,6 +791,24 @@ def aplicar_preset():
         st.session_state["temp_high_input"]   = preset["temp_high"]
         st.session_state["action_low_input"]  = preset["action_low"]
         st.session_state["action_high_input"] = preset["action_high"]
+
+
+# ===========================================================
+# PRESETS AMBIENTALES (modo Temperatura + Humedad)
+# Límites de control de temperatura por laboratorio/ambiente.
+# ===========================================================
+PRESETS_AMBIENTAL = {
+    "Personalizado": None,
+    "Laboratorio BD&BE": {"temp_low": 17.0, "temp_high": 23.0},
+}
+
+def aplicar_preset_ambiental():
+    """Callback: al cambiar el selector de ambiente, sobreescribe los number_input de temperatura."""
+    nombre = st.session_state.get("preset_ambiental")
+    preset = PRESETS_AMBIENTAL.get(nombre)
+    if preset:
+        st.session_state["temp_low_input_amb"]  = preset["temp_low"]
+        st.session_state["temp_high_input_amb"] = preset["temp_high"]
 
 
 # ===========================================================
@@ -685,18 +829,55 @@ with st.sidebar:
         )
     )
     tiene_humedad = modo == "SensorPush (Temp + Humedad)"
+
+    st.subheader("Formato del archivo")
+    if tiene_humedad:
+        formato = st.selectbox(
+            "Origen de los datos",
+            ["SensorPush (CSV/Excel/ZIP)", "Datalogger ambiental — Lab nuevo (Test Report)"],
+            key="formato_humedad",
+            help=(
+                "Datalogger ambiental — Lab nuevo: reporte tipo 'Test Report' con cabecera "
+                "de metadatos y tabla NO / Temp / RH / TIME. Suele llegar con extensión .xls "
+                "aunque el contenido es texto plano."
+            ),
+        )
+    else:
+        formato = st.selectbox(
+            "Origen de los datos",
+            ["Nevera clásica (CSV ; decimal coma)", "Nevera — Lab nuevo (TXT multi-sonda)"],
+            key="formato_temp",
+            help=(
+                "Nevera — Lab nuevo: log multi-sonda tabulado (Marker, Timestamp, T cham, "
+                "T1-T3, Compr.1/2, Room temp, Evap temp, door...). Se usa 'T cham' como "
+                "temperatura principal."
+            ),
+        )
     st.markdown("---")
 
-    if tiene_humedad:
+    if formato == "SensorPush (CSV/Excel/ZIP)":
         uploaded_file = st.file_uploader("Sube CSV, Excel o ZIP", type=["csv","xlsx","xls","zip"])
-    else:
+    elif formato == "Datalogger ambiental — Lab nuevo (Test Report)":
+        uploaded_file = st.file_uploader("Sube el Test Report", type=["txt","xls"])
+    elif formato == "Nevera clásica (CSV ; decimal coma)":
         uploaded_file = st.file_uploader("Sube CSV de temperatura", type=["csv","txt"])
+    else:
+        uploaded_file = st.file_uploader("Sube el log de la nevera", type=["txt"])
 
     # ---- Límites ----
     st.subheader("Límites de alarma")
     if tiene_humedad:
-        temp_low   = st.number_input("Temperatura mínima (°C)", value=20.0, step=0.5)
-        temp_high  = st.number_input("Temperatura máxima (°C)", value=23.0, step=0.5)
+        st.markdown("**Preset de ambiente**")
+        st.selectbox(
+            "Selecciona el laboratorio / ambiente",
+            list(PRESETS_AMBIENTAL.keys()),
+            key="preset_ambiental",
+            on_change=aplicar_preset_ambiental,
+            help="Carga automáticamente los límites de control de temperatura de ese ambiente. "
+                 "Puedes ajustar los valores manualmente después si lo necesitas."
+        )
+        temp_low   = st.number_input("Temperatura mínima (°C)", value=20.0, step=0.5, key="temp_low_input_amb")
+        temp_high  = st.number_input("Temperatura máxima (°C)", value=23.0, step=0.5, key="temp_high_input_amb")
         hum_low    = st.number_input("Humedad mínima (%)",      value=30.0, step=1.0)
         hum_high   = st.number_input("Humedad máxima (%)",      value=40.0, step=1.0)
         # Valores dummy para modo solo temp
@@ -764,29 +945,47 @@ with st.sidebar:
     base_filename = clean_filename(base_filename_input) or default_name
     st.caption(f"Nombre actual: {base_filename}")
     st.markdown("---")
-    st.caption("v9 — Niveles FAO de 3 zonas reales + presets por equipo.")
+    st.caption("v10 — Niveles FAO de 3 zonas reales + presets por equipo + formatos del laboratorio nuevo.")
 
 
 # ===========================================================
 # CARGA Y PREPARACIÓN
 # ===========================================================
 if uploaded_file is None:
-    if tiene_humedad:
+    if formato == "SensorPush (CSV/Excel/ZIP)":
         st.info("📂 Sube un archivo CSV, Excel o ZIP del SensorPush para comenzar.")
-    else:
+    elif formato == "Datalogger ambiental — Lab nuevo (Test Report)":
+        st.info(
+            "📂 Sube el 'Test Report' del datalogger ambiental del laboratorio nuevo.\n\n"
+            "**Formato esperado:** cabecera de metadatos + línea `----` + tabla "
+            "`NO / Temp / RH / TIME` (aunque llegue con extensión .xls, el contenido es texto plano)."
+        )
+    elif formato == "Nevera clásica (CSV ; decimal coma)":
         st.info(
             "📂 Sube el archivo CSV de temperatura de la nevera.\n\n"
             "**Formato esperado:** separador `;` | sin encabezados | decimal con coma\n"
             "Columnas: `índice ; fecha ; hora ; temperatura`"
         )
+    else:
+        st.info(
+            "📂 Sube el log de la nevera del laboratorio nuevo.\n\n"
+            "**Formato esperado:** 3 líneas de encabezado, luego columnas tabuladas "
+            "`Marker | Time | Timestamp | T cham | ... | Room temp | Evap temp | door | ...`"
+        )
     st.stop()
 
 try:
-    if tiene_humedad:
+    if formato == "SensorPush (CSV/Excel/ZIP)":
         df_raw = load_data_sensorpush(uploaded_file)
         df = prepare_dataframe_sensorpush(df_raw)
-    else:
+    elif formato == "Datalogger ambiental — Lab nuevo (Test Report)":
+        df = load_data_ambiental_labnuevo(uploaded_file)
+        df_raw = df.copy()
+    elif formato == "Nevera clásica (CSV ; decimal coma)":
         df = load_data_solo_temp(uploaded_file)
+        df_raw = df.copy()
+    else:
+        df = load_data_nevera_labnuevo(uploaded_file)
         df_raw = df.copy()
 except Exception as e:
     st.error(f"❌ No fue posible procesar el archivo: {e}")
@@ -1097,6 +1296,7 @@ with tab5:
     st.markdown("**Diagnóstico del archivo**")
     diag = {
         "Modo": "SensorPush" if tiene_humedad else "Solo Temperatura",
+        "Formato de origen": formato,
         "Registros originales": len(df_raw),
         "Registros válidos en periodo": len(df),
         "Registros en resumen ejecutivo": len(df_metrics),
