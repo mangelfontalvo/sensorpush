@@ -660,7 +660,8 @@ def generate_pdf_report_sensorpush(df, fig_temp, fig_hum, events_df,
                                     temp_limits, hum_limits,
                                     temp_compliance, hum_compliance,
                                     delta_temp=None, delta_hum=None,
-                                    temp_delta_ok=None, hum_delta_ok=None):
+                                    temp_delta_ok=None, hum_delta_ok=None,
+                                    mostrar_delta=True):
     pdf_buffer = io.BytesIO()
     with PdfPages(pdf_buffer) as pdf:
         fig, ax = plt.subplots(figsize=(11.69, 8.27)); ax.axis("off")
@@ -677,8 +678,13 @@ def generate_pdf_report_sensorpush(df, fig_temp, fig_hum, events_df,
             "",
             f"Cumplimiento temperatura: {temp_compliance:.2f}%",
             f"Cumplimiento humedad: {hum_compliance:.2f}%",
-            f"Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "Δ Temperatura: N/D",
-            f"Δ HR: {delta_hum:.2f} %  ({'Cumple' if hum_delta_ok else 'No cumple'} ≤5%)" if delta_hum is not None else "Δ HR: N/D",
+        ]
+        if mostrar_delta:
+            lines += [
+                f"Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "Δ Temperatura: N/D",
+                f"Δ HR: {delta_hum:.2f} %  ({'Cumple' if hum_delta_ok else 'No cumple'} ≤5%)" if delta_hum is not None else "Δ HR: N/D",
+            ]
+        lines += [
             "",
             f"Temperatura — mín: {ts['mínimo']:.2f}  máx: {ts['máximo']:.2f}  prom: {ts['promedio']:.2f} °C" if ts["mínimo"] is not None else "Temperatura — sin datos",
             f"Humedad — mín: {hs['mínimo']:.2f}  máx: {hs['máximo']:.2f}  prom: {hs['promedio']:.2f} %" if hs["mínimo"] is not None else "Humedad — sin datos",
@@ -700,7 +706,7 @@ def generate_pdf_report_sensorpush(df, fig_temp, fig_hum, events_df,
 def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
                                    temp_low, temp_high, action_low, action_high,
                                    temp_compliance, n_alerta, n_accion,
-                                   delta_temp=None, temp_delta_ok=None):
+                                   delta_temp=None, temp_delta_ok=None, mostrar_delta=True):
     pdf_buffer = io.BytesIO()
     with PdfPages(pdf_buffer) as pdf:
         fig, ax = plt.subplots(figsize=(11.69, 8.27)); ax.axis("off")
@@ -722,7 +728,12 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
             f"  % Registros en rango seguro: {temp_compliance:.2f}%",
             f"  Eventos de ALERTA detectados: {n_alerta}",
             f"  Eventos de ACCIÓN detectados: {n_accion}",
-            f"  Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "  Δ Temperatura: N/D",
+        ]
+        if mostrar_delta:
+            lines.append(
+                f"  Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "  Δ Temperatura: N/D"
+            )
+        lines += [
             "",
             "ESTADÍSTICAS:",
             f"  Mínimo:  {ts['mínimo']:.2f} °C" if ts["mínimo"] is not None else "  Sin datos",
@@ -740,7 +751,7 @@ def generate_pdf_report_solo_temp(df, fig_static, events_alerta, events_accion,
 
 def generate_pdf_report_temp_simple(df, fig_static, events_df,
                                      temp_limits, temp_compliance,
-                                     delta_temp=None, temp_delta_ok=None):
+                                     delta_temp=None, temp_delta_ok=None, mostrar_delta=True):
     """PDF para el modo rango simple (sin niveles FAO): solo dentro/fuera de rango."""
     pdf_buffer = io.BytesIO()
     with PdfPages(pdf_buffer) as pdf:
@@ -758,7 +769,12 @@ def generate_pdf_report_temp_simple(df, fig_static, events_df,
             "RESUMEN DE CUMPLIMIENTO:",
             f"  Cumplimiento: {temp_compliance:.2f}%",
             f"  Eventos fuera de rango: {len(events_df)}",
-            f"  Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "  Δ Temperatura: N/D",
+        ]
+        if mostrar_delta:
+            lines.append(
+                f"  Δ Temperatura: {delta_temp:.2f} °C  ({'Cumple' if temp_delta_ok else 'No cumple'} ≤2°C)" if delta_temp is not None else "  Δ Temperatura: N/D"
+            )
+        lines += [
             "",
             "ESTADÍSTICAS:",
             f"  Mínimo:  {ts['mínimo']:.2f} °C" if ts["mínimo"] is not None else "  Sin datos",
@@ -828,19 +844,21 @@ PRESETS_NEVERA = {
     },
     "Laboratorio BD&BE (nevera 2-8°C)": {
         "tipo": "simple",
+        "usar_delta": False,
         "temp_low": 2.0, "temp_high": 8.0,
     },
 }
 
 def aplicar_preset():
-    """Callback: al cambiar el selector de equipo, sobreescribe los number_input
-    y activa/desactiva el sistema de niveles FAO según el tipo del preset."""
+    """Callback: al cambiar el selector de equipo, sobreescribe los number_input,
+    activa/desactiva el sistema de niveles FAO y el criterio Δ según el preset."""
     nombre = st.session_state.get("preset_equipo")
     preset = PRESETS_NEVERA.get(nombre)
     if not preset:
         return
     st.session_state["temp_low_input"]  = preset["temp_low"]
     st.session_state["temp_high_input"] = preset["temp_high"]
+    st.session_state["usar_delta_input"] = preset.get("usar_delta", True)
     if preset.get("tipo") == "simple":
         st.session_state["usar_fao_input"] = False
         # sin zona de alerta/acción: los límites de acción quedan igual al rango seguro
@@ -858,11 +876,15 @@ def aplicar_preset():
 # ===========================================================
 PRESETS_AMBIENTAL = {
     "Personalizado": None,
-    "Laboratorio BD&BE": {"temp_low": 17.0, "temp_high": 23.0, "hum_low": 30.0, "hum_high": 70.0},
+    "Laboratorio BD&BE": {
+        "temp_low": 17.0, "temp_high": 23.0, "hum_low": 30.0, "hum_high": 70.0,
+        "usar_delta": False,
+    },
 }
 
 def aplicar_preset_ambiental():
-    """Callback: al cambiar el selector de ambiente, sobreescribe los number_input de temperatura y humedad."""
+    """Callback: al cambiar el selector de ambiente, sobreescribe los number_input
+    de temperatura/humedad y activa/desactiva el criterio Δ según el preset."""
     nombre = st.session_state.get("preset_ambiental")
     preset = PRESETS_AMBIENTAL.get(nombre)
     if preset:
@@ -870,6 +892,7 @@ def aplicar_preset_ambiental():
         st.session_state["temp_high_input_amb"] = preset["temp_high"]
         st.session_state["hum_low_input_amb"]  = preset["hum_low"]
         st.session_state["hum_high_input_amb"] = preset["hum_high"]
+        st.session_state["usar_delta_input_amb"] = preset.get("usar_delta", True)
 
 
 # ===========================================================
@@ -942,6 +965,12 @@ with st.sidebar:
         temp_high  = st.number_input("Temperatura máxima (°C)", value=23.0, step=0.5, key="temp_high_input_amb")
         hum_low    = st.number_input("Humedad mínima (%)",      value=30.0, step=1.0, key="hum_low_input_amb")
         hum_high   = st.number_input("Humedad máxima (%)",      value=40.0, step=1.0, key="hum_high_input_amb")
+        usar_delta = st.checkbox(
+            "Evaluar criterio Δ (variación máxima Temp ≤2°C / HR ≤5%)",
+            value=True,
+            key="usar_delta_input_amb",
+            help="Desactívalo si este criterio no aplica para este laboratorio."
+        )
         # Valores dummy para modo solo temp
         action_low = 0.0
         action_high = 100.0
@@ -963,6 +992,12 @@ with st.sidebar:
             key="usar_fao_input",
             help="Desactívalo para usar solo un rango de control simple (dentro/fuera de rango), "
                  "sin zona de alerta ni de acción."
+        )
+        usar_delta = st.checkbox(
+            "Evaluar criterio Δ Temperatura (variación máxima ≤2°C)",
+            value=True,
+            key="usar_delta_input",
+            help="Desactívalo si este criterio no aplica para este equipo/laboratorio."
         )
         hum_low = hum_high = 0.0
 
@@ -1168,23 +1203,29 @@ if tiene_humedad:
     r6.metric("Prom. humedad",     f"{hum_stats['promedio']:.2f} %"  if hum_stats.get("promedio") else "N/D")
     r7.metric("Mín. temperatura",  f"{temp_stats['mínimo']:.2f} °C"  if temp_stats["mínimo"] else "N/D")
     r8.metric("Máx. temperatura",  f"{temp_stats['máximo']:.2f} °C"  if temp_stats["máximo"] else "N/D")
-    r9,r10,r11,r12 = st.columns(4)
-    r9.metric("Mín. HR",  f"{hum_stats['mínimo']:.2f} %" if hum_stats.get("mínimo") else "N/D")
-    r10.metric("Máx. HR", f"{hum_stats['máximo']:.2f} %" if hum_stats.get("máximo") else "N/D")
-    r11.metric("Δ Temperatura", f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
-               delta="Cumple" if temp_delta_ok else "No cumple")
-    r12.metric("Δ Humedad relativa", f"{delta_hum:.2f} %" if delta_hum is not None else "N/D",
-               delta="Cumple" if hum_delta_ok else "No cumple",
-               delta_color="normal" if hum_delta_ok else "inverse")
+    if usar_delta:
+        r9,r10,r11,r12 = st.columns(4)
+        r9.metric("Mín. HR",  f"{hum_stats['mínimo']:.2f} %" if hum_stats.get("mínimo") else "N/D")
+        r10.metric("Máx. HR", f"{hum_stats['máximo']:.2f} %" if hum_stats.get("máximo") else "N/D")
+        r11.metric("Δ Temperatura", f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+                   delta="Cumple" if temp_delta_ok else "No cumple")
+        r12.metric("Δ Humedad relativa", f"{delta_hum:.2f} %" if delta_hum is not None else "N/D",
+                   delta="Cumple" if hum_delta_ok else "No cumple",
+                   delta_color="normal" if hum_delta_ok else "inverse")
+    else:
+        r9,r10 = st.columns(2)
+        r9.metric("Mín. HR",  f"{hum_stats['mínimo']:.2f} %" if hum_stats.get("mínimo") else "N/D")
+        r10.metric("Máx. HR", f"{hum_stats['máximo']:.2f} %" if hum_stats.get("máximo") else "N/D")
     st.progress(min((temp_compliance+hum_compliance)/200, 1.0),
                 text=f"Cumplimiento global: {(temp_compliance+hum_compliance)/2:.2f}%")
-    alertas = []
-    if temp_delta_ok is False: alertas.append("Δ Temperatura supera criterio (≤2°C).")
-    if hum_delta_ok  is False: alertas.append("Δ HR supera criterio (≤5%).")
-    if alertas:
-        st.warning(" ".join(alertas))
-    else:
-        st.success("Criterios de Δ cumplidos.")
+    if usar_delta:
+        alertas = []
+        if temp_delta_ok is False: alertas.append("Δ Temperatura supera criterio (≤2°C).")
+        if hum_delta_ok  is False: alertas.append("Δ HR supera criterio (≤5%).")
+        if alertas:
+            st.warning(" ".join(alertas))
+        else:
+            st.success("Criterios de Δ cumplidos.")
 
 else:
     if usar_fao:
@@ -1200,12 +1241,16 @@ else:
                   delta=f"{n_accion_reg} registros",
                   delta_color="inverse" if n_accion_reg > 0 else "off")
 
-        r5,r6,r7,r8 = st.columns(4)
+        if usar_delta:
+            r5,r6,r7,r8 = st.columns(4)
+        else:
+            r5,r6,r7 = st.columns(3)
         r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
         r6.metric("Mín. temperatura",  f"{temp_stats['mínimo']:.2f} °C"  if temp_stats["mínimo"]   is not None else "N/D")
         r7.metric("Máx. temperatura",  f"{temp_stats['máximo']:.2f} °C"  if temp_stats["máximo"]   is not None else "N/D")
-        r8.metric("Δ Temperatura",     f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
-                  delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
+        if usar_delta:
+            r8.metric("Δ Temperatura",     f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+                      delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
 
         r9,r10,r11,r12 = st.columns(4)
         r9.metric("Eventos de alerta",   f"{len(events_alerta)}")
@@ -1224,12 +1269,16 @@ else:
             st.success("Todos los registros se encuentran en el rango seguro.")
     else:
         # ---- KPIs modo Solo Temperatura con rango simple (sin niveles FAO) ----
-        r1,r2,r3,r4 = st.columns(4)
+        if usar_delta:
+            r1,r2,r3,r4 = st.columns(4)
+        else:
+            r1,r2,r3 = st.columns(3)
         r1.metric("Registros analizados", f"{len(df_metrics):,}".replace(",","."))
         r2.metric("Cumplimiento",         f"{temp_compliance:.2f}%")
         r3.metric("Eventos fuera de rango", f"{len(events_simple)}")
-        r4.metric("Δ Temperatura",        f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
-                  delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
+        if usar_delta:
+            r4.metric("Δ Temperatura",        f"{delta_temp:.2f} °C" if delta_temp is not None else "N/D",
+                      delta="Cumple ≤2°C" if temp_delta_ok else "No cumple ≤2°C")
 
         r5,r6,r7 = st.columns(3)
         r5.metric("Prom. temperatura", f"{temp_stats['promedio']:.2f} °C" if temp_stats["promedio"] is not None else "N/D")
@@ -1280,8 +1329,9 @@ with tab1:
             msgs=[]
             if temp_compliance<100: msgs.append(f"Temp. fuera de criterio en {temp_out['registros']} registros.")
             if hum_compliance<100:  msgs.append(f"HR fuera de criterio en {hum_out['registros']} registros.")
-            if temp_delta_ok is False: msgs.append("Δ Temperatura no cumple.")
-            if hum_delta_ok  is False: msgs.append("Δ HR no cumple.")
+            if usar_delta:
+                if temp_delta_ok is False: msgs.append("Δ Temperatura no cumple.")
+                if hum_delta_ok  is False: msgs.append("Δ HR no cumple.")
             if msgs:
                 st.warning(" ".join(msgs))
             else:
@@ -1391,7 +1441,8 @@ with tab4:
             df_metrics, fig_temp_static, fig_hum_static, events_df,
             (temp_low,temp_high),(hum_low,hum_high),
             temp_compliance,hum_compliance,
-            delta_temp,delta_hum,temp_delta_ok,hum_delta_ok)
+            delta_temp,delta_hum,temp_delta_ok,hum_delta_ok,
+            mostrar_delta=usar_delta)
         temp_png = fig_to_bytes(fig_temp_static)
         hum_png  = fig_to_bytes(fig_hum_static)
     else:
@@ -1404,7 +1455,7 @@ with tab4:
                 events_alerta, events_accion,
                 temp_low, temp_high, action_low, action_high,
                 temp_compliance, len(events_alerta), len(events_accion),
-                delta_temp, temp_delta_ok)
+                delta_temp, temp_delta_ok, mostrar_delta=usar_delta)
         else:
             fig_temp_static = build_matplotlib_chart(
                 df_view, "Temperatura", "Temperatura", "Temperatura (°C)",
@@ -1412,7 +1463,7 @@ with tab4:
             pdf_bytes = generate_pdf_report_temp_simple(
                 df_metrics, fig_temp_static, events_simple,
                 (temp_low, temp_high), temp_compliance,
-                delta_temp, temp_delta_ok)
+                delta_temp, temp_delta_ok, mostrar_delta=usar_delta)
         temp_png = fig_to_bytes(fig_temp_static)
         hum_png  = None
 
@@ -1454,9 +1505,10 @@ with tab5:
         "Paso de muestreo estimado (min)": round(sampling,2) if sampling else None,
         "% temp. fuera de rango seguro": round(temp_out["porcentaje_registros"],2),
         "Min. estimados fuera de rango": round(temp_out["minutos_estimados"],1),
-        "Δ Temperatura (°C)": round(delta_temp,2) if delta_temp is not None else None,
-        "Cumple Δ Temperatura (≤2°C)": temp_delta_ok,
     }
+    if usar_delta:
+        diag["Δ Temperatura (°C)"] = round(delta_temp,2) if delta_temp is not None else None
+        diag["Cumple Δ Temperatura (≤2°C)"] = temp_delta_ok
     if not tiene_humedad:
         diag["Sistema de niveles FAO"] = "Sí" if usar_fao else "No (rango simple)"
         if usar_fao:
@@ -1473,9 +1525,8 @@ with tab5:
                 "Eventos fuera de rango": len(events_simple),
             })
     else:
-        diag.update({
-            "% HR fuera de rango": round(hum_out["porcentaje_registros"],2),
-            "Δ HR (%)": round(delta_hum,2) if delta_hum is not None else None,
-            "Cumple Δ HR (≤5%)": hum_delta_ok,
-        })
+        diag["% HR fuera de rango"] = round(hum_out["porcentaje_registros"],2)
+        if usar_delta:
+            diag["Δ HR (%)"] = round(delta_hum,2) if delta_hum is not None else None
+            diag["Cumple Δ HR (≤5%)"] = hum_delta_ok
     st.write(diag)
